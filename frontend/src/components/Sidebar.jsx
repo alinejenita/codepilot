@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { 
   SquarePen, 
   MessageSquare, 
@@ -6,9 +6,7 @@ import {
   Cpu, 
   FolderGit2, 
   Sparkles, 
-  ChevronRight,
   ShieldCheck,
-  CheckCircle2,
   Clock
 } from 'lucide-react';
 
@@ -25,9 +23,8 @@ export default function Sidebar({
 
   const templates = [
     { title: "Inspect workspace structure", prompt: "Inspect this project and explain its directory structure and files." },
-    { title: "Create Python math module", prompt: "Create a Python module in the workspace called math_utils.py with add, subtract, and multiply functions." },
-    { title: "Run pytest test suite", prompt: "Run pytest inside the workspace and tell me if all tests pass." },
-    { title: "Fix syntax & logic bugs", prompt: "Search the workspace for any syntax or logic errors, propose fixes, and verify them." },
+    { title: "Search for a symbol", prompt: "Search the workspace for a function or symbol and explain where it is used." },
+    { title: "Explain a Python module", prompt: "Inspect a Python module in the workspace and explain its purpose and key functions." },
   ];
 
   return (

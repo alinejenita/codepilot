@@ -215,3 +215,172 @@ UI responses are now clean. Tool calls are hidden in the collapsible Execution T
 
 ### Current status
 Repository is clean and documented. Ready for first GitHub push.
+
+
+---
+
+## 2026-11-18 — Coding Agent MVP: Workspace Safety, Editing, and Test Runner
+
+### Prompt given
+"i need this to be a good coding agent now so let's do whatever this tasks need okay??"
+
+### Work completed
+- Replaced the previous path resolver with a canonical workspace guard that rejects traversal and symlinks resolving outside the configured root.
+- Added bounded text search, live file previews, and atomic UTF-8 file writes. File-writing tools are only supplied when the user explicitly enables edits for a request.
+- Added an opt-in pytest-only tool. It uses an argument list (never a shell), restricts targets to workspace-relative paths, applies the configured timeout, and caps returned output. There is no arbitrary command tool.
+- Loaded the canonical system prompt from `prompts/SYSTEM_PROMPT.md`, wired the configured maximum agent iteration count and Ollama keep-alive setting, and made tool result/error reporting explicit.
+- Updated the web UI and CLI with edit/test permission toggles. The workspace drawer now reads actual workspace files, and backend failures no longer create fake successful tool traces.
+- Added automated file-tool, agent-loop, permission, and API boundary tests. Updated README setup, API, capabilities, and limitations.
+
+### Files created or changed
+- `backend/app/tools/file_tools.py` — path safety, list/read/search, atomic writes
+- `backend/app/agent/loop.py` — bounded agent orchestration, guarded tools, pytest runner
+- `backend/app/api/routes_chat.py` — chat permission flags and workspace preview endpoints
+- `backend/tests/` — offline unit and API tests
+- `frontend/src/App.jsx`, `frontend/src/services/api.js`, `frontend/src/components/WorkspacePanel.jsx` — permission controls and real workspace views
+- `frontend/src/components/ChatMessage.jsx`, `frontend/src/components/Sidebar.jsx`, `frontend/src/components/ToolActivityPanel.jsx` — accurate tool and capability display
+- `cli/main.py` — edit/test permission toggles and updated agent return handling
+- `prompts/SYSTEM_PROMPT.md` — current tool and safety instructions
+- `README.md` — current behavior, configuration, and limitations
+
+### Commands and tests
+- `.venv/bin/python -m pytest backend/tests` — PASS (17 tests)
+- `cd frontend && npm run build` — PASS
+- `.venv/bin/python -m backend.app.smoke_test qwen2.5-coder:7b` — PASS (local Ollama tool call)
+- Local agent turn asking it to list workspace files — PASS (`list_files` executed and result synthesized)
+- `git diff --check` — PASS
+- `cd frontend && npm run lint` — FAIL (37 ESLint errors remain, all missing React prop validation; production build succeeds)
+
+### Current status
+CodePilot can inspect, search, and explain files; create or replace files when explicitly enabled; and run pytest on a workspace-relative target when explicitly enabled. File and test tool permissions default to off. General shell execution, streaming, and per-file diff approval are not implemented.
+
+### Issues and decisions
+- Pytest runs project code and configuration, so it remains opt-in and should only be used with a trusted workspace.
+- The test tool is deliberately limited to pytest rather than accepting arbitrary shell commands.
+- Frontend lint cleanup was not mixed into this feature work; the current lint failure is recorded for a separate cleanup task.
+
+### Next steps
+- Add a reviewable diff/approval flow for edits rather than relying only on request-level permission.
+- Decide whether to support a carefully allowlisted set of additional commands.
+- Resolve frontend ESLint issues and add interaction tests for permission toggles and workspace previews.
+
+
+---
+
+## 2026-11-18 — CLI Workspace Selection and Clear Write Failures
+
+### Prompt given
+"i need the cli to create and save files too in the mentioned directory"
+
+### Work completed
+- Added the CLI `--workspace` option so a user can intentionally select an existing directory, such as `~/Desktop`, as the active workspace boundary.
+- Kept file writes opt-in through `/allow-edits`; the configured CLI workspace remains the only root accessible to the agent, and parent directories for requested new files are created automatically.
+- Updated the CLI banner and `/workspace` command to show the active directory.
+- Fixed tool trace status output to show a failure marker for failed tool calls instead of always printing a green success.
+- Documented the Desktop example and added tests for explicit workspace selection and invalid workspace paths.
+
+### Files created or changed
+- `cli/main.py` — `--workspace` option, active workspace display, accurate tool status
+- `backend/tests/test_cli.py` — CLI workspace selection tests
+- `README.md` — CLI usage for selecting Desktop or another workspace
+- `prompts/PROMPT_LOG.md` — this entry
+
+### Commands and tests
+- `.venv/bin/python -m pytest backend/tests` — PASS (19 tests)
+- `cd frontend && npm run build` — PASS (from the previous implementation validation)
+- `python -m cli.main --help` — PASS (`--workspace` option shown)
+- Piped `/workspace`, `/allow-edits`, `/exit` to CLI with `--workspace "$HOME/Desktop"` — PASS (selected root displayed and edit toggle enabled)
+- `git diff --check` — PASS
+
+### Current status
+The CLI can target a user-selected existing directory while preserving workspace containment. File creation and replacement still require `/allow-edits`.
+
+### Issues and decisions
+- Desktop access is not granted by default. The user must explicitly pass the directory as `--workspace`; all tool paths remain restricted to that selected root.
+
+### Next steps
+- Restart the CLI with `--workspace "$HOME/Desktop"`, enable `/allow-edits`, and test a small file creation.
+
+### Follow-up correction — prompt-directed destinations
+- The user clarified they do not want to choose a workspace when starting the CLI. The CLI now detects an explicitly requested Desktop or existing absolute home-directory save destination in the current prompt, uses it as the workspace boundary, and retains that boundary for follow-up turns.
+- `/workspace` reports the active boundary; `/workspace default` returns to the configured default.
+- External workspace selection is restricted to a directory under the current user's home folder and is only enabled by the CLI after parsing a save/create request. The API continues to enforce its configured workspace.
+- The CLI also grants file-write permission for one task when the prompt clearly requests an implementation change, so the user does not need a separate `/allow-edits` command for ordinary create/fix/update requests. Explanatory "how-to" questions do not auto-enable writes; `/allow-edits` remains available for follow-up tasks.
+- Verified with tests for Desktop/absolute-path prompt parsing and home-directory boundary enforcement.
+
+### Follow-up correction — use the current prompt destination
+- User testing showed an existing CLI process still using its previous code, so it remained scoped to the default workspace. Prompt-directed workspaces are resolved when the CLI receives each task; restart an already running CLI after updating the code.
+- The destination parser now uses the nearest existing parent for a new absolute file/folder destination. An absolute model-generated path is allowed only if it resolves within that selected workspace.
+- Failed write traces now report the real boundary error in the summary instead of saying "Wrote".
+- Removed workspace selection from CLI startup. No startup directory choice is required; the prompt determines it for the task.
+- Added regression tests for the exact Desktop calculator flow and absolute in-workspace tool paths.
+
+---
+
+## 2026-11-18 — Bundled Agent Skills
+
+### Work completed
+- Added bundled skills using the Agent Skills `SKILL.md` directory format with validated `name` and `description` metadata.
+- Added progressive discovery: skill summaries are included in the system context, while full instructions are loaded on demand through a read-only `load_skill` tool.
+- Added built-in workflows for workspace exploration, feature implementation, debugging, and testing/verification.
+- Added `/skills` to the CLI and documented skill authoring, activation, and security boundaries.
+
+### Files created or changed
+- `backend/app/agent/skills.py` — validate, discover, and load bundled skills by registered name
+- `backend/app/agent/loop.py` — advertise skill metadata and expose the constrained loader tool
+- `skills/` — four built-in coding workflow skills
+- `cli/main.py` — `/skills` command
+- `prompts/SYSTEM_PROMPT.md` and `README.md` — skill behavior and usage
+- `backend/tests/test_skills.py` — discovery, metadata validation, loading, and agent activation tests
+
+### Commands and tests
+- `.venv/bin/python -m pytest backend/tests -q` — PASS (31 tests)
+- `git diff --check` — PASS
+
+### Security and design decisions
+- Skills are guidance, not executable plugins. They cannot grant tool availability, edit/test permissions, shell access, or a wider workspace.
+- The model can load only a skill by a validated registered name; it cannot provide an arbitrary path.
+- Followed the Agent Skills progressive-disclosure approach: short descriptions first, full instructions only when relevant.
+
+---
+
+## 2026-11-18 — Explicit CLI Workspace Selection in Prompts
+
+### Work completed
+- Fixed CLI routing for requests such as “use `<absolute path>` as the workspace and explore it.”
+- Workspace-selection prompts now select only the explicitly named existing directory; they do not silently fall back to a parent when that workspace is missing.
+- Kept the existing home-directory authorization boundary for CLI-selected workspaces and documented the prompt pattern.
+
+### Verification
+- `.venv/bin/python -m pytest backend/tests/test_cli.py -q` — PASS (7 tests)
+- Runtime check against `/Users/jenny/Development/projects/final_archon_ai` — PASS; path exists and is selected as requested
+- `git diff --check` — PASS
+
+---
+
+## 2026-11-19 — CLI Conversation Context and Automatic Skill Activation
+
+### Work completed
+- The CLI now passes up to the last 12 user/assistant messages into each agent turn, preserving context for follow-up prompts.
+- Added automatic activation of matching skill instructions for common task signals, including project/workspace exploration and technology-stack questions.
+- Clarified that project-specific questions should be answered by inspecting the active workspace with the available file tools, not by asking users to list files.
+- Expanded the workspace exploration skill with direct inspection guidance for dependency manifests and technology identification.
+
+### Verification
+- `.venv/bin/python -m pytest backend/tests/test_cli.py backend/tests/test_skills.py backend/tests/test_agent_loop.py -q` — PASS (25 tests)
+- `git diff --check` — PASS
+
+---
+
+## 2026-11-19 — Stronger Workspace Exploration Evidence
+
+### Work completed
+- Tightened the workspace-exploration skill for backend/frontend and technology-stack questions: do not answer from `README.md` alone; inspect dependency manifests for each relevant app or service.
+- Added a fallback to inspect entry points, imports, and framework configuration when a dependency manifest is missing.
+- Required answers to distinguish declared dependencies from technologies verified in source/configuration and identify the files supporting conclusions.
+- Updated the canonical system prompt to reinforce direct workspace inspection for stack questions.
+- Updated this README to explain the skill behavior and note that skill guidance is model-driven, not a guarantee of tool use.
+
+### Verification
+- `.venv/bin/python -m pytest backend/tests/test_skills.py -q` — PASS (8 tests)
+- `git diff --check` — PASS

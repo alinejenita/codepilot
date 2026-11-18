@@ -6,7 +6,7 @@
 
 ## Overview
 
-CodePilot is a full-stack AI coding assistant that runs **100% offline** on your machine. It uses a local LLM (via Ollama) to inspect codebases, read files, and answer engineering questions through a multi-step tool-calling agent loop — no cloud APIs required.
+CodePilot is a full-stack AI coding assistant designed to run locally through Ollama. It can inspect and search a configured workspace, answer engineering questions with tool evidence, and create or replace files when the user explicitly enables file edits for a request. It does not use cloud model APIs.
 
 | Layer | Stack |
 |---|---|
@@ -22,10 +22,13 @@ CodePilot is a full-stack AI coding assistant that runs **100% offline** on your
 ## Features
 
 - 🧠 **Multi-step agent loop** — model plans, calls tools, reads results, synthesizes answers
+- 🔎 **Workspace search** — bounded, case-insensitive search with file and line references
+- ✍️ **Opt-in file edits** — file writes are not available unless enabled for the request
+- 🧪 **Opt-in pytest runner** — runs only `python -m pytest` against a workspace-relative target; no general shell tool
 - 💬 **Claude-style Web UI** — persistent chat history, collapsible execution trace pills, terracotta accent palette
 - 🖥️ **OpenCode-style CLI** — rich terminal panels, `CodePilot ❯` prompt, slash commands
-- 📂 **Multi-turn context** — remembers active codebase path across conversation turns
-- 🔒 **Workspace containment** — file tools are sandboxed to the target directory
+- 📂 **Live workspace preview** — reads the actual files from the configured workspace
+- 🔒 **Workspace containment** — traversal and symlink escapes are rejected
 - 🛠️ **Tool execution traces** — every tool call logged with args, result, and latency
 
 ---
@@ -40,11 +43,13 @@ codepilot/
 │   │   ├── config.py            # pydantic-settings config from .env
 │   │   ├── agent/
 │   │   │   └── loop.py          # Bounded multi-turn agent loop
+│   │   │   └── skills.py        # Bundled Agent Skills discovery and loading
 │   │   ├── api/
 │   │   │   ├── routes_health.py # GET /api/health
 │   │   │   └── routes_chat.py   # POST /api/chat
 │   │   ├── tools/
-│   │   │   └── file_tools.py    # list_files + read_file (sandboxed)
+│   │   │   └── file_tools.py    # list, read, search, and opt-in write tools
+│   │   ├── tests/               # Offline unit and API tests
 │   │   └── smoke_test.py        # Tool-calling verification script
 │   └── requirements.txt
 ├── frontend/
@@ -65,6 +70,7 @@ codepilot/
 ├── prompts/
 │   ├── SYSTEM_PROMPT.md         # Canonical agent system instructions
 │   └── PROMPT_LOG.md            # Append-only development diary
+├── skills/                      # Bundled, on-demand Agent Skills
 ├── workspace/                   # Default sandboxed workspace
 ├── .env.example
 └── README.md
@@ -149,6 +155,18 @@ source .venv/bin/activate
 python cli/main.py
 ```
 
+The CLI starts in the configured default workspace. You can name a different save destination or explicitly select an existing workspace directly in a task prompt; for example:
+
+> Create a basic OOP calculator and save it in a new `test_calc` folder on my Desktop as `calculator.py`.
+>
+> Use `/Users/jenny/Development/projects/final_archon_ai` as the workspace and explore its contents.
+
+When the prompt explicitly names Desktop or an absolute directory under your home folder as the save destination, the CLI selects that location for the task (using the nearest existing parent if the requested folder does not exist). For workspace-selection requests, the CLI switches only to the named existing directory. The agent can create missing folders beneath a selected workspace; paths outside it remain blocked. Use `/workspace` to see the active directory or `/workspace default` to return to the configured default.
+
+The CLI carries up to the last 12 user/assistant messages into each agent request, so follow-up prompts can refer to earlier questions and answers. For project-specific questions, CodePilot inspects the active workspace with its file tools instead of asking the user to enumerate files. Relevant bundled skill instructions are automatically included for common task types.
+
+For a direct request to create or change a file (for example, “create a calculator file”), the CLI enables file edits for that task only. For broader follow-up editing, enter `/allow-edits` to toggle persistent edit permission. Restart an already-open CLI process after updating CodePilot so it loads these prompt-routing changes.
+
 ---
 
 ## CLI Slash Commands
@@ -157,8 +175,11 @@ python cli/main.py
 |---|---|
 | `/help` | Show available commands |
 | `/model <name>` | Switch active model |
-| `/workspace` | Show active workspace path |
-| `/trace` | Toggle tool execution trace display |
+| `/workspace` | Show active workspace path and list its files |
+| `/trace` | Show the detailed tool execution trace of the last turn |
+| `/skills` | List bundled agent skills and when they apply |
+| `/allow-edits` | Toggle file creation and replacement |
+| `/allow-tests` | Toggle pytest execution for subsequent tasks |
 | `/clear` | Clear the terminal |
 | `/exit` | Quit CodePilot |
 
@@ -169,6 +190,8 @@ python cli/main.py
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/health` | Ollama status + available models |
+| `GET` | `/api/workspace` | List files at the configured workspace root |
+| `GET` | `/api/workspace/file?path=...` | Preview a UTF-8 text file inside the workspace |
 | `POST` | `/api/chat` | Send a message; returns answer + tool steps |
 
 ### `/api/chat` request body
@@ -178,9 +201,21 @@ python cli/main.py
   "message": "Explain the backend structure",
   "model": "qwen2.5-coder:7b",
   "history": [...],
-  "workspace": "/path/to/project"
+  "workspace": "./subdirectory",
+  "allow_edits": false,
+  "allow_test_execution": false
 }
 ```
+
+`WORKSPACE_ROOT` in `.env` defines the maximum accessible directory. A request may select that root or a subdirectory, never a path outside it. Set `allow_edits` to `true` only when the user has approved file changes for that request. Pytest can execute code and project configuration; enable `allow_test_execution` only for a workspace you trust.
+
+## Agent Skills
+
+CodePilot supports bundled skills in the open Agent Skills directory format: each `skills/<name>/SKILL.md` contains YAML frontmatter with a matching lowercase kebab-case `name` and a `description`, followed by Markdown instructions. CodePilot includes only each skill's name and description in the model's system context. For common task signals, matching skill instructions are included automatically; otherwise, the model can call the read-only `load_skill` tool to load relevant guidance. The loader only accepts registered bundled skill names; it does not read arbitrary paths or execute skill files.
+
+Built-in skills cover [workspace exploration](./skills/workspace-exploration/SKILL.md), [feature implementation](./skills/feature-implementation/SKILL.md), [debugging](./skills/debugging/SKILL.md), and [testing and verification](./skills/testing-and-verification/SKILL.md). For questions about the backend/frontend stack, workspace exploration directs CodePilot to inspect manifests for each relevant app or service (such as `requirements.txt` and `package.json`) rather than relying on `README.md` alone. If a manifest is absent, it should inspect entry points, imports, and framework configuration, and identify the files supporting its conclusions.
+
+Skills provide workflow guidance only: they cannot enable file edits or tests, grant shell access, or change workspace restrictions. Skill activation and tool use are model-guided rather than a guarantee that every suggested inspection will occur, so verify tool traces for important answers. Use `/skills` in the CLI to list available skills.
 
 ---
 
@@ -190,7 +225,14 @@ Verify the full tool-calling pipeline without the UI:
 
 ```bash
 source .venv/bin/activate
-python backend/app/smoke_test.py
+python -m backend.app.smoke_test
+```
+
+Run the automated tests without requiring Ollama:
+
+```bash
+source .venv/bin/activate
+pytest backend/tests
 ```
 
 ---
@@ -219,7 +261,7 @@ User (Browser / Terminal)
    ├─ System prompt + history + user message
    ├─ Ollama chat() with tool definitions
    ├─ Extract tool calls (native → XML → bracket-depth JSON)
-   ├─ Execute tools (list_files, read_file)
+   ├─ Execute tools (list, read, search, opt-in write, opt-in pytest)
    └─ Feed results back → next iteration
         │
         ▼
@@ -233,10 +275,12 @@ User (Browser / Terminal)
 
 ## Known Limitations
 
-- File tools are currently read-only (`list_files`, `read_file`)
+- No general shell command tool is available. Pytest runs only after explicit user opt-in.
+- File edits replace a whole file when explicitly enabled. Review changes in version control before accepting them.
+- Pytest executes the target project's code; treat the test opt-in as running untrusted code.
 - No streaming / SSE yet — responses arrive all at once
-- Workspace write and shell execution tools are planned but not yet wired
 - Context window capped at 8192 tokens (configurable via `.env`)
+- Workspace root is configured by the operator in `.env`; there is no per-request arbitrary-root access.
 
 ---
 

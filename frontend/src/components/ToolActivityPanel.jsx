@@ -1,8 +1,6 @@
-import React from 'react';
 import { 
   Activity, 
   Terminal, 
-  Clock, 
   CheckCircle2, 
   XCircle, 
   Loader2, 
@@ -30,10 +28,10 @@ export default function ToolActivityPanel({ onClose, steps = [] }) {
       <div className="p-3 bg-[#080d19] border-b border-slate-800 text-[11px] text-slate-300 flex items-center justify-between">
         <span className="flex items-center gap-1.5">
           <ShieldCheck size={13} className="text-emerald-400" />
-          Execution Sandbox
+          Workspace Boundary
         </span>
         <span className="font-mono text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-emerald-300">
-          STRICT ISOLATION
+          PATH CHECKED
         </span>
       </div>
 
@@ -43,7 +41,7 @@ export default function ToolActivityPanel({ onClose, steps = [] }) {
             <Terminal size={32} className="mx-auto text-slate-600 mb-3 opacity-60" />
             <p className="font-medium text-slate-300">No tool actions yet</p>
             <p className="text-[11px] mt-1 text-slate-400">
-              When you submit a coding task, CodePilot's tool calls (listing, reading, editing, testing) will appear here live.
+              File listing, reading, searching, and enabled edits appear here after the agent responds.
             </p>
           </div>
         ) : (
@@ -93,8 +91,8 @@ export default function ToolActivityPanel({ onClose, steps = [] }) {
       </div>
 
       <div className="p-3 border-t border-[#1e293b] bg-[#090d16] text-[10px] text-slate-400 flex items-center justify-between">
-        <span>Bounded loop: Max 8 steps</span>
-        <span>Timeout: 30s</span>
+        <span>Bounded agent loop</span>
+        <span>No shell access</span>
       </div>
     </aside>
   );

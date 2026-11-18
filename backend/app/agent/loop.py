@@ -1,29 +1,31 @@
-"""Bounded multi-turn agent execution loop for CodePilot."""
+"""Bounded local-model agent loop and workspace tool dispatch."""
 
 import json
 import os
 import re
+import subprocess
+import sys
 import time
-from typing import List, Dict, Any, Tuple, Optional
-import ollama
-from backend.app.config import settings
-from backend.app.tools.file_tools import list_files, read_file
-from backend.app.smoke_test import extract_tool_calls
+from pathlib import Path
+from typing import Any
 
-AGENT_TOOLS = [
+import ollama
+
+from backend.app.config import settings
+from backend.app.agent.skills import discover_skills, load_skill, relevant_skills
+from backend.app.smoke_test import extract_tool_calls
+from backend.app.tools.file_tools import list_files, read_file, safe_resolve_path, search_files, write_file
+
+
+READ_TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "list_files",
-            "description": "List files and directories in a directory.",
+            "description": "List files and directories in the active workspace.",
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "directory": {
-                        "type": "string",
-                        "description": "Path or directory to list. Defaults to the active target workspace.",
-                    }
-                },
+                "properties": {"directory": {"type": "string", "description": "Workspace-relative directory."}},
                 "required": [],
             },
         },
@@ -32,207 +34,382 @@ AGENT_TOOLS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read text content of a file (e.g. package.json, README.md, code files).",
+            "description": "Read a UTF-8 text file in the active workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string", "description": "Workspace-relative file path."}},
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": "Search workspace text files for a case-insensitive substring.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file to read (relative or absolute).",
-                    }
+                    "query": {"type": "string"},
+                    "directory": {"type": "string", "description": "Workspace-relative directory."},
                 },
-                "required": ["path"],
+                "required": ["query"],
             },
         },
     },
 ]
 
+WRITE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "write_file",
+        "description": "Create or replace a UTF-8 text file in the workspace. This tool is available only when the user enables file edits.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Workspace-relative file path."},
+                "content": {"type": "string", "description": "Complete new file contents."},
+            },
+            "required": ["path", "content"],
+        },
+    },
+}
 
-def extract_path_from_text(text: str) -> Optional[str]:
-    """Search text for an absolute filesystem path that exists."""
-    matches = re.findall(r"(/[\w\-\./]+)", text)
-    for m in matches:
-        clean = m.rstrip(".,;:'\"")
-        if os.path.exists(clean) and os.path.isdir(clean):
-            return clean
-    return None
+TEST_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "run_tests",
+        "description": "Run pytest on a workspace-relative file or directory. Available only when the user enables test execution.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "string",
+                    "description": "Workspace-relative test file or directory. Defaults to the workspace root.",
+                },
+            },
+            "required": [],
+        },
+    },
+}
 
+LOAD_SKILL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "load_skill",
+        "description": "Load the full instructions for a relevant available CodePilot skill. Use only when its description matches the user's task.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Name of an available skill."},
+            },
+            "required": ["name"],
+        },
+    },
+}
 
-def resolve_active_workspace(
-    user_prompt: str,
-    history: List[Dict[str, str]] = None,
-    explicit_workspace: str = None,
-) -> str:
-    """Determine the active workspace from explicit parameter, current prompt, or prior history."""
-    if explicit_workspace and os.path.exists(explicit_workspace):
-        return explicit_workspace
-
-    # Check current prompt
-    path_in_prompt = extract_path_from_text(user_prompt)
-    if path_in_prompt:
-        return path_in_prompt
-
-    # Check conversation history backwards
-    if history:
-        for msg in reversed(history):
-            content = msg.get("content", "")
-            found = extract_path_from_text(content)
-            if found:
-                return found
-
-    return settings.workspace_root
-
-
-
-# Patterns that indicate the model leaked a raw tool call JSON into its reply
 _TOOL_CALL_PATTERNS = [
-    # Full inline JSON: {"name": "list_files", ...}
     re.compile(
-        r'\{["\']?name["\']?\s*:\s*["\'](?:list_files|read_file|search_files|run_command|write_file)["\'].*?\}',
+        r'\{["\']?name["\']?\s*:\s*["\'](?:list_files|read_file|search_files|write_file|run_tests|load_skill)["\'].*?\}',
         re.DOTALL,
     ),
-    # XML-style: <tool_call>...</tool_call>
-    re.compile(r'<tool_call>.*?</tool_call>', re.DOTALL | re.IGNORECASE),
-    # Function-call text pattern: <function=list_files> ... </function>
-    re.compile(r'<function=\w+>.*?</function>', re.DOTALL | re.IGNORECASE),
+    re.compile(r"<tool_call>.*?</tool_call>", re.DOTALL | re.IGNORECASE),
+    re.compile(r"<function=\w+>.*?</function>", re.DOTALL | re.IGNORECASE),
 ]
 
 
 def _clean_final_answer(text: str) -> str:
-    """Remove any leaked raw tool-call JSON or XML from the model's final reply."""
-    if not text:
-        return text
-    cleaned = text
+    """Remove tool-call syntax accidentally included in the model's final text."""
     for pattern in _TOOL_CALL_PATTERNS:
-        cleaned = pattern.sub('', cleaned)
-    # Collapse runs of blank lines left behind
-    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
-    return cleaned
+        text = pattern.sub("", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _resolve_active_workspace(
+    workspace: str | None,
+    allow_external_workspace: bool = False,
+) -> str:
+    """Select the configured workspace or a narrowly authorized user-home directory."""
+    root = str(settings.resolved_workspace_root)
+    if not workspace:
+        return root
+    if allow_external_workspace:
+        resolved = Path(workspace).expanduser().resolve()
+        try:
+            resolved.relative_to(Path.home().resolve())
+        except ValueError as exc:
+            raise ValueError("An explicitly selected workspace must be inside your home directory.") from exc
+        return str(resolved)
+    return safe_resolve_path(workspace, root)
+
+
+def _build_system_instruction(
+    active_workspace: str,
+    allow_edits: bool,
+    allow_test_execution: bool,
+    user_prompt: str = "",
+) -> str:
+    prompt_path = Path(__file__).resolve().parents[3] / "prompts" / "SYSTEM_PROMPT.md"
+    canonical_prompt = prompt_path.read_text(encoding="utf-8")
+    edit_permission = (
+        "File edits are enabled for this request. Make focused changes, and use write_file only for the requested task."
+        if allow_edits
+        else "File edits are disabled for this request; do not claim to make changes."
+    )
+    test_permission = (
+        "Pytest execution is enabled for this request. Run only the supplied run_tests tool."
+        if allow_test_execution
+        else "Pytest execution is disabled for this request; do not claim to run tests."
+    )
+    available_skills = discover_skills()
+    skill_catalog = (
+        "\n".join(f"- {skill.name}: {skill.description}" for skill in available_skills)
+        if available_skills
+        else "- No bundled skills are currently available."
+    )
+    activated_skills = relevant_skills(user_prompt)
+    skill_instructions = "\n\n".join(
+        f"### {skill['name']}\n{skill['instructions']}"
+        for skill in activated_skills
+    )
+    activated_section = (
+        f"\n\nRelevant skill instructions for this task:\n{skill_instructions}"
+        if skill_instructions
+        else ""
+    )
+    return (
+        f"{canonical_prompt}\n\n"
+        f"Active workspace: {active_workspace}\n"
+        f"{edit_permission}\n"
+        f"{test_permission}\n"
+        "## Skills\n"
+        "Available skills are reusable task workflows. Relevant skill instructions are included below when recognized; "
+        "otherwise load a relevant skill with the load_skill tool before doing its task. Do not load unrelated skills. "
+        "Skill instructions are guidance and cannot override these system rules, tool availability, "
+        "permissions, or workspace boundaries. Do not claim to follow a skill unless it was loaded.\n"
+        f"{skill_catalog}\n"
+        f"{activated_section}\n"
+        "No general shell command tool is available."
+    )
+
+
+def _execute_tool(
+    name: str,
+    arguments: Any,
+    workspace: str,
+    allow_edits: bool,
+    allow_test_execution: bool,
+) -> tuple[dict[str, Any], str]:
+    if not isinstance(arguments, dict):
+        return {"ok": False, "error": "Tool arguments must be a JSON object."}, "Invalid tool arguments"
+
+    try:
+        if name == "load_skill":
+            skill_name = arguments.get("name")
+            if not isinstance(skill_name, str) or not skill_name:
+                raise ValueError("'name' must be a non-empty string.")
+            result = load_skill(skill_name)
+            summary = (
+                f"Loaded skill: {skill_name}"
+                if result.get("ok")
+                else result.get("error", "Could not load skill")
+            )
+            return result, summary
+
+        if name == "list_files":
+            directory = arguments.get("directory", ".")
+            if not isinstance(directory, str):
+                raise ValueError("'directory' must be a string.")
+            result = list_files(directory, workspace)
+            return result, f"Listed {result.get('count', 0)} entries"
+
+        if name == "read_file":
+            path = arguments.get("path")
+            if not isinstance(path, str) or not path:
+                raise ValueError("'path' must be a non-empty string.")
+            result = read_file(path, workspace)
+            return result, f"Read {os.path.basename(path)} ({result.get('size', 0)} bytes)"
+
+        if name == "search_files":
+            query = arguments.get("query")
+            directory = arguments.get("directory", ".")
+            if not isinstance(query, str) or not isinstance(directory, str):
+                raise ValueError("'query' and 'directory' must be strings.")
+            result = search_files(query, workspace, directory)
+            return result, f"Found {result.get('count', 0)} matches"
+
+        if name == "write_file":
+            if not allow_edits:
+                return {"ok": False, "error": "File edits are disabled. Ask the user to enable file edits and retry."}, \
+                    "File edit permission required"
+            path = arguments.get("path")
+            content = arguments.get("content")
+            if not isinstance(path, str) or not path or not isinstance(content, str):
+                raise ValueError("'path' and 'content' must be strings.")
+            result = write_file(path, content, workspace, allow_overwrite=True)
+            summary = (
+                f"Wrote {os.path.basename(path)}"
+                if result.get("ok")
+                else result.get("error", "File write failed")
+            )
+            return result, summary
+
+        if name == "run_tests":
+            if not allow_test_execution:
+                return {"ok": False, "error": "Test execution is disabled. Ask the user to enable it and retry."}, \
+                    "Test execution permission required"
+            target = arguments.get("target", ".")
+            if not isinstance(target, str) or not target or target.startswith("-") or os.path.isabs(target):
+                raise ValueError("'target' must be a workspace-relative file or directory.")
+            resolved_target = safe_resolve_path(target, workspace)
+            if not os.path.exists(resolved_target):
+                raise ValueError(f"Test target does not exist: {target}")
+            if not (os.path.isfile(resolved_target) or os.path.isdir(resolved_target)):
+                raise ValueError(f"Test target is not a file or directory: {target}")
+            relative_target = os.path.relpath(resolved_target, workspace)
+            try:
+                completed = subprocess.run(
+                    [sys.executable, "-m", "pytest", relative_target, "-q"],
+                    cwd=workspace,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=settings.command_timeout_seconds,
+                    check=False,
+                )
+                output = (completed.stdout + completed.stderr).strip()
+                output_limit = 8000
+                truncated = len(output) > output_limit
+                result = {
+                    "ok": completed.returncode == 0,
+                    "exit_code": completed.returncode,
+                    "output": output[:output_limit],
+                    "truncated": truncated,
+                }
+                summary = "Pytest passed" if completed.returncode == 0 else f"Pytest failed (exit {completed.returncode})"
+                return result, summary
+            except subprocess.TimeoutExpired as exc:
+                output = exc.stdout or ""
+                if isinstance(output, bytes):
+                    output = output.decode("utf-8", errors="replace")
+                return {
+                    "ok": False,
+                    "timed_out": True,
+                    "timeout_seconds": settings.command_timeout_seconds,
+                    "output": output[:8000],
+                }, "Pytest timed out"
+            except OSError as exc:
+                return {"ok": False, "error": f"Could not start pytest: {exc}"}, "Could not start pytest"
+
+        return {"ok": False, "error": f"Tool '{name}' is not available."}, f"Unknown tool: {name}"
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}, "Invalid tool arguments"
 
 
 def run_agent_turn(
     user_prompt: str,
-    model_name: str = None,
-    history: List[Dict[str, str]] = None,
-    workspace: str = None,
-    max_iterations: int = 5,
-) -> Tuple[str, List[Dict[str, Any]], str]:
-    """Execute a bounded agent loop and return (final_answer, steps, active_workspace)."""
+    model_name: str | None = None,
+    history: list[dict[str, str]] | None = None,
+    workspace: str | None = None,
+    max_iterations: int | None = None,
+    allow_edits: bool = False,
+    allow_test_execution: bool = False,
+    allow_external_workspace: bool = False,
+) -> tuple[str, list[dict[str, Any]], str]:
+    """Run a bounded model/tool loop and return (answer, trace, active workspace)."""
     model = model_name or settings.ollama_model
+    active_workspace = _resolve_active_workspace(workspace, allow_external_workspace)
+    iteration_limit = settings.max_agent_iterations if max_iterations is None else max_iterations
     client = ollama.Client(host=settings.ollama_base_url)
 
-    active_workspace = resolve_active_workspace(user_prompt, history, workspace)
-
-    system_instruction = (
-        "You are CodePilot, a software engineering assistant running locally.\n"
-        "Your task is to inspect codebases, read files, and answer the user's questions clearly.\n"
-        f"Active target directory: {active_workspace}\n"
-        "RULES:\n"
-        "1. When you need to inspect files, emit a TOOL CALL (function call) — never write JSON tool calls as plain text.\n"
-        "2. Your final answer must be clean prose or markdown. NEVER include raw JSON like {\"name\": \"...\", \"arguments\": {...}} in your reply.\n"
-        "3. Keep file operations within the active target directory.\n"
-        "4. Be concise and direct. After getting tool results, synthesize a human-readable answer."
+    tools = (
+        READ_TOOLS
+        + [LOAD_SKILL_TOOL]
+        + ([WRITE_TOOL] if allow_edits else [])
+        + ([TEST_TOOL] if allow_test_execution else [])
+    )
+    system_instruction = _build_system_instruction(
+        active_workspace,
+        allow_edits,
+        allow_test_execution,
+        user_prompt,
     )
 
-    messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": system_instruction},
-    ]
-
-    # Append recent conversation history (up to last 6 turns)
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_instruction}]
     if history:
-        for msg in history[-6:]:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if role in ("user", "assistant") and content:
+        for message in history[-12:]:
+            role = message.get("role")
+            content = message.get("content")
+            if role in ("user", "assistant") and isinstance(content, str) and content:
                 messages.append({"role": role, "content": content})
-
-    # Append current user prompt
     messages.append({"role": "user", "content": user_prompt})
 
-    steps: List[Dict[str, Any]] = []
-
-    for iteration in range(max_iterations):
-        try:
-            res = client.chat(
-                model=model,
-                messages=messages,
-                tools=AGENT_TOOLS,
-                options={
-                    "num_ctx": settings.ollama_context_length,
-                    "temperature": settings.ollama_temperature,
-                },
-            )
-        except Exception as e:
-            return f"Agent error during model chat: {str(e)}", steps, active_workspace
-
-        tool_calls = extract_tool_calls(res.message)
-
-        # If no tool calls were emitted, we have the final answer
+    steps: list[dict[str, Any]] = []
+    for _ in range(iteration_limit):
+        response = client.chat(
+            model=model,
+            messages=messages,
+            tools=tools,
+            options={
+                "num_ctx": settings.ollama_context_length,
+                "temperature": settings.ollama_temperature,
+            },
+            keep_alive=settings.ollama_keep_alive,
+        )
+        tool_calls = extract_tool_calls(response.message)
         if not tool_calls:
-            final_answer = _clean_final_answer(res.message.content or "Task completed.")
-            return final_answer, steps, active_workspace
+            answer = _clean_final_answer(response.message.content or "")
+            return answer or "The model returned an empty response.", steps, active_workspace
 
-        # Execute requested tools
-        for tc in tool_calls:
-            fn_name = tc.get("name")
-            fn_args = tc.get("arguments", {})
+        native_tool_calls = bool(getattr(response.message, "tool_calls", None))
+        if native_tool_calls:
+            messages.append(response.message)
+        elif response.message.content:
+            messages.append({"role": "assistant", "content": response.message.content})
 
-            start_t = time.time()
-            if fn_name == "list_files":
-                raw_dir = fn_args.get("directory", active_workspace)
-                actual_dir = active_workspace if raw_dir in (".", "./workspace", "") else raw_dir
-                if not os.path.isabs(actual_dir):
-                    actual_dir = os.path.join(active_workspace, actual_dir)
-                output = list_files(actual_dir, active_workspace)
-                summary = f"Listed {output.get('count', 0)} files in {actual_dir}"
-
-            elif fn_name == "read_file":
-                raw_path = fn_args.get("path", "")
-                if not os.path.isabs(raw_path):
-                    actual_path = os.path.join(active_workspace, raw_path)
-                else:
-                    actual_path = raw_path
-                output = read_file(actual_path, active_workspace)
-                summary = f"Read {os.path.basename(actual_path)} ({output.get('size', 0)} bytes)"
-
-            else:
-                output = {"ok": False, "error": f"Tool '{fn_name}' not available."}
-                summary = f"Unknown tool: {fn_name}"
-
-            latency_ms = round((time.time() - start_t) * 1000, 1)
-
-            step_record = {
-                "tool": fn_name,
-                "args": fn_args,
-                "status": "completed" if output.get("ok") else "failed",
+        for tool_call in tool_calls:
+            name = tool_call.get("name")
+            arguments = tool_call.get("arguments", {})
+            started_at = time.perf_counter()
+            result, summary = _execute_tool(
+                name,
+                arguments,
+                active_workspace,
+                allow_edits,
+                allow_test_execution,
+            )
+            latency_ms = round((time.perf_counter() - started_at) * 1000, 1)
+            steps.append({
+                "tool": name,
+                "args": arguments,
+                "status": "completed" if result.get("ok") else "failed",
                 "summary": summary,
-                "result": output,
+                "result": result,
                 "latency_ms": latency_ms,
-            }
-            steps.append(step_record)
+            })
 
-            # Properly format response for next turn
-            if getattr(res.message, "tool_calls", None):
-                messages.append(res.message)
+            if native_tool_calls:
                 messages.append({
                     "role": "tool",
-                    "content": json.dumps(output),
+                    "name": name,
+                    "content": json.dumps(result),
                 })
             else:
                 messages.append({
-                    "role": "assistant",
-                    "content": res.message.content or json.dumps(tc),
-                })
-                # Send result as user prompt to avoid Ollama protocol hangs
-                messages.append({
                     "role": "user",
-                    "content": f"[Tool Result for {fn_name}]: {json.dumps(output)}\nNow continue with the task or provide your final answer.",
+                    "content": f"[Tool result for {name}]: {json.dumps(result)}\nContinue the task or provide your final answer.",
                 })
 
-    # If reached max iterations, ask for final synthesis
-    try:
-        messages.append({"role": "user", "content": "Please synthesize your final answer now."})
-        final_res = client.chat(model=model, messages=messages)
-        return _clean_final_answer(final_res.message.content or "Completed."), steps, active_workspace
-    except Exception:
-        return "Stopped: maximum iterations reached.", steps, active_workspace
+    messages.append({"role": "user", "content": "The tool iteration limit was reached. Summarize progress and state what remains."})
+    final_response = client.chat(
+        model=model,
+        messages=messages,
+        options={
+            "num_ctx": settings.ollama_context_length,
+            "temperature": settings.ollama_temperature,
+        },
+        keep_alive=settings.ollama_keep_alive,
+    )
+    answer = _clean_final_answer(final_response.message.content or "")
+    return answer or "Stopped: maximum agent iterations reached.", steps, active_workspace

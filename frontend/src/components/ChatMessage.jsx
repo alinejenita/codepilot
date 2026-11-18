@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { 
   Copy, 
@@ -12,9 +12,7 @@ import {
   Search, 
   CheckCircle2, 
   XCircle, 
-  Loader2,
-  Wrench,
-  Clock
+  Wrench
 } from 'lucide-react';
 
 function getToolIcon(tool) {
@@ -23,6 +21,8 @@ function getToolIcon(tool) {
       return <FolderSearch size={13} className="text-cyan-400" />;
     case 'read_file':
       return <FileText size={13} className="text-amber-400" />;
+    case 'run_tests':
+      return <Terminal size={13} className="text-orange-400" />;
     case 'search_files':
       return <Search size={13} className="text-purple-400" />;
     case 'write_file':
@@ -42,6 +42,7 @@ function ExecutionTracePill({ steps = [] }) {
   if (!steps || steps.length === 0) return null;
 
   const toolNames = Array.from(new Set(steps.map((s) => s.tool))).join(', ');
+  const hasFailure = steps.some((step) => step.status === 'failed');
 
   return (
     <div className="my-2.5 rounded-xl border border-[#33332f] bg-[#222220] overflow-hidden text-xs transition-all">
@@ -62,8 +63,11 @@ function ExecutionTracePill({ steps = [] }) {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full font-medium">
-            <CheckCircle2 size={10} /> completed
+          <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium ${
+            hasFailure ? 'text-rose-400 bg-rose-500/10' : 'text-emerald-400 bg-emerald-500/10'
+          }`}>
+            {hasFailure ? <XCircle size={10} /> : <CheckCircle2 size={10} />}
+            {hasFailure ? 'some actions failed' : 'completed'}
           </span>
           {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </div>
@@ -83,8 +87,10 @@ function ExecutionTracePill({ steps = [] }) {
                     {step.tool}
                   </span>
                 </div>
-                <span className="text-[10px] text-emerald-400 font-mono">
-                  ✓ {step.status}
+                <span className={`text-[10px] font-mono ${
+                  step.status === 'failed' ? 'text-rose-400' : 'text-emerald-400'
+                }`}>
+                  {step.status === 'failed' ? '✗' : '✓'} {step.status}
                 </span>
               </div>
 
@@ -121,7 +127,7 @@ function ExecutionTracePill({ steps = [] }) {
 
 // Strip any raw tool-call JSON/XML the model might have leaked into the reply
 const TOOL_CALL_RE = [
-  /\{"?name"?\s*:\s*"(?:list_files|read_file|search_files|run_command|write_file)".*?\}/gs,
+  /\{"?name"?\s*:\s*"(?:list_files|read_file|search_files|run_command|write_file|run_tests)".*?\}/gs,
   /<tool_call>.*?<\/tool_call>/gis,
   /<function=\w+>.*?<\/function>/gis,
 ];
@@ -183,7 +189,7 @@ export default function ChatMessage({ message }) {
         {/* Markdown Content */}
         <div className="prose prose-invert prose-sm max-w-none text-[#edece6] leading-relaxed text-sm">
           <ReactMarkdown
-            components={{              code({ node, inline, className, children, ...props }) {
+            components={{              code({ inline, className, children, ...props }) {
                 const match = /language-(\w+)/.exec(className || '');
                 return !inline ? (
                   <div className="relative my-3 rounded-xl overflow-hidden border border-[#383834] bg-[#1a1a18]">

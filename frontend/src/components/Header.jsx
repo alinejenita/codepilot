@@ -1,10 +1,7 @@
-import React from 'react';
 import { 
   PanelLeft, 
   FolderGit2, 
-  Cpu, 
   RefreshCw,
-  Sparkles,
   ChevronDown
 } from 'lucide-react';
 
@@ -12,11 +9,9 @@ export default function Header({
   currentModel,
   onModelChange,
   availableModels = [],
-  health,
   onRefreshHealth,
   showWorkspacePanel,
   onToggleWorkspacePanel,
-  isSidebarOpen,
   onToggleSidebar,
   currentChatTitle = "New Chat"
 }) {

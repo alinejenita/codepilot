@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import ChatMessage from './components/ChatMessage';
 import WorkspacePanel from './components/WorkspacePanel';
 import { fetchHealth, sendChatMessage } from './services/api';
-import { ArrowUp, Loader2, Sparkles, FolderSearch, Terminal, FileCode2 } from 'lucide-react';
+import { ArrowUp, Loader2, FolderSearch, Terminal, FileCode2 } from 'lucide-react';
 
 const STORAGE_KEY = 'codepilot_chat_sessions_v2';
 const CURRENT_ID_KEY = 'codepilot_current_session_id_v2';
@@ -12,9 +12,9 @@ const CURRENT_ID_KEY = 'codepilot_current_session_id_v2';
 const DEFAULT_WELCOME_MESSAGE = {
   id: 'welcome-msg',
   role: 'assistant',
-  content: `I am **CodePilot**, your local coding agent running with Apple Silicon Metal acceleration on your **MacBook Air M4**.
+  content: `I am **CodePilot**, your local coding agent running through Ollama.
 
-I can inspect your workspace, plan and write code, diagnose test failures, and run terminal commands—with all operations strictly contained inside \`./workspace\`.
+I can inspect and search your configured workspace. Enable **Allow file edits** to create or replace files, or **Allow pytest** to run tests in a trusted workspace. General shell commands are not available.
 
 Ask me a question or try one of the suggestions below to get started.`,
   timestamp: 'Just now',
@@ -47,7 +47,9 @@ export default function App() {
     try {
       const savedId = localStorage.getItem(CURRENT_ID_KEY);
       if (savedId) return savedId;
-    } catch {}
+    } catch (error) {
+      console.warn('Could not read the saved session ID:', error);
+    }
     return 'session-default';
   });
 
@@ -55,6 +57,8 @@ export default function App() {
   const [health, setHealth] = useState(null);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [allowEdits, setAllowEdits] = useState(false);
+  const [allowTests, setAllowTests] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [showWorkspacePanel, setShowWorkspacePanel] = useState(false);
   const messagesEndRef = useRef(null);
@@ -72,7 +76,9 @@ export default function App() {
   useEffect(() => {
     try {
       localStorage.setItem(CURRENT_ID_KEY, currentSessionId);
-    } catch {}
+    } catch (error) {
+      console.warn('Could not save the current session ID:', error);
+    }
   }, [currentSessionId]);
 
   // Check backend and Ollama health
@@ -130,7 +136,11 @@ export default function App() {
     const prompt = (textToSend || inputValue).trim();
     if (!prompt || isLoading) return;
 
+    const allowEditsForRequest = allowEdits;
+    const allowTestsForRequest = allowTests;
     setInputValue('');
+    setAllowEdits(false);
+    setAllowTests(false);
     const userMsgId = `usr-${Date.now()}`;
     const assistantMsgId = `asst-${Date.now()}`;
     const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -174,6 +184,8 @@ export default function App() {
         model: currentModel,
         history: historyPayload,
         workspace: currentSession.workspace,
+        allowEdits: allowEditsForRequest,
+        allowTests: allowTestsForRequest,
       });
 
       const assistantMsg = {
@@ -196,17 +208,6 @@ export default function App() {
         )
       );
     } catch (err) {
-      // Fallback response with trace
-      const fallbackSteps = [
-        {
-          tool: 'list_files',
-          args: { directory: '.' },
-          status: 'completed',
-          summary: 'Scanned workspace directory',
-          result: { files: ['hello_world.py', '.gitkeep'] },
-        },
-      ];
-
       const fallbackMsg = {
         id: assistantMsgId,
         role: 'assistant',
@@ -215,7 +216,7 @@ export default function App() {
 The backend or model adapter encountered an error: \`${err.message}\`.
 Make sure the backend is active at \`http://127.0.0.1:8000\` and Ollama is running.`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        steps: fallbackSteps,
+        steps: [],
       };
 
       setSessions((prev) =>
@@ -239,8 +240,8 @@ Make sure the backend is active at \`http://127.0.0.1:8000\` and Ollama is runni
 
   const promptStarters = [
     { label: "Inspect workspace structure", icon: <FolderSearch size={14} className="text-cyan-400" /> },
-    { label: "Create a Python math_utils.py module", icon: <FileCode2 size={14} className="text-emerald-400" /> },
-    { label: "Run pytest tests in workspace", icon: <Terminal size={14} className="text-orange-400" /> },
+    { label: "Search for a function or symbol", icon: <FileCode2 size={14} className="text-emerald-400" /> },
+    { label: "Explain a file in the workspace", icon: <Terminal size={14} className="text-orange-400" /> },
   ];
 
   return (
@@ -333,7 +334,26 @@ Make sure the backend is active at \`http://127.0.0.1:8000\` and Ollama is runni
                   <span className="font-mono text-[10px] bg-[#1a1a18] px-2 py-0.5 rounded text-[#bbb9b0] border border-[#33332f]">
                     {currentModel}
                   </span>
-                  <span className="hidden sm:inline">Workspace containment active</span>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Allow CodePilot to create or replace files inside the configured workspace for the next request.">
+                    <input
+                      type="checkbox"
+                      checked={allowEdits}
+                      onChange={(event) => setAllowEdits(event.target.checked)}
+                      disabled={isLoading}
+                      className="accent-[#d97757]"
+                    />
+                    <span>Allow file edits</span>
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer select-none" title="Pytest runs project code and configuration. Enable only for a workspace you trust.">
+                    <input
+                      type="checkbox"
+                      checked={allowTests}
+                      onChange={(event) => setAllowTests(event.target.checked)}
+                      disabled={isLoading}
+                      className="accent-[#d97757]"
+                    />
+                    <span>Allow pytest</span>
+                  </label>
                 </div>
 
                 {/* Claude-style Round Terracotta Send Button */}
