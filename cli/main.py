@@ -26,11 +26,11 @@ import ollama
 from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
-from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
-from rich.prompt import Prompt
 from rich.theme import Theme
+from backend.app.config import settings
+from backend.app.agent.loop import run_agent_turn
 
 # Custom OpenCode theme
 custom_theme = Theme({
@@ -45,70 +45,7 @@ custom_theme = Theme({
 
 console = Console(theme=custom_theme)
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
-WORKSPACE_ROOT = os.path.abspath(os.getenv("WORKSPACE_ROOT", "./workspace"))
 DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
-
-# Simple tool definition for CLI agent
-list_files_tool = {
-    "type": "function",
-    "function": {
-        "name": "list_files",
-        "description": "List files and subdirectories in the specified workspace directory.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "directory": {
-                    "type": "string",
-                    "description": "Relative directory path inside the workspace to list. Defaults to '.'",
-                }
-            },
-            "required": [],
-        },
-    },
-}
-
-read_file_tool = {
-    "type": "function",
-    "function": {
-        "name": "read_file",
-        "description": "Read the contents of a text file located inside the workspace.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Workspace-relative file path to read.",
-                }
-            },
-            "required": ["path"],
-        },
-    },
-}
-
-write_file_tool = {
-    "type": "function",
-    "function": {
-        "name": "write_file",
-        "description": "Write or create a text file inside the workspace safely.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Workspace-relative file path to write to.",
-                },
-                "content": {
-                    "type": "string",
-                    "description": "The exact content to write into the file.",
-                },
-            },
-            "required": ["path", "content"],
-        },
-    },
-}
-
-AVAILABLE_TOOLS = [list_files_tool, read_file_tool, write_file_tool]
 
 
 def print_banner(model_name: str):
@@ -148,53 +85,18 @@ def print_help():
 
 def list_workspace_files():
     """List workspace files cleanly."""
-    if not os.path.exists(WORKSPACE_ROOT):
-        os.makedirs(WORKSPACE_ROOT, exist_ok=True)
-    files = os.listdir(WORKSPACE_ROOT)
-    table = Table(title=f"Workspace Contents ({WORKSPACE_ROOT})", border_style="cyan")
+    ws_root = settings.resolved_workspace_root
+    if not os.path.exists(ws_root):
+        os.makedirs(ws_root, exist_ok=True)
+    files = os.listdir(ws_root)
+    table = Table(title=f"Workspace Contents ({ws_root})", border_style="cyan")
     table.add_column("File / Directory", style="bold green")
     table.add_column("Size", style="dim white")
     for f in sorted(files):
-        p = os.path.join(WORKSPACE_ROOT, f)
+        p = os.path.join(ws_root, f)
         size = f"{os.path.getsize(p)} bytes" if os.path.isfile(p) else "DIR"
         table.add_row(f, size)
     console.print(table)
-
-
-def execute_tool_safely(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-    """Execute tools within strict workspace boundaries."""
-    if name == "list_files":
-        sub_dir = args.get("directory", ".")
-        target = os.path.abspath(os.path.join(WORKSPACE_ROOT, sub_dir))
-        if not target.startswith(WORKSPACE_ROOT):
-            return {"ok": False, "error": "Access denied: Path escapes workspace root."}
-        if not os.path.exists(target):
-            return {"ok": False, "error": f"Directory not found: {sub_dir}"}
-        return {"ok": True, "files": os.listdir(target)}
-
-    elif name == "read_file":
-        rel_path = args.get("path", "")
-        target = os.path.abspath(os.path.join(WORKSPACE_ROOT, rel_path))
-        if not target.startswith(WORKSPACE_ROOT):
-            return {"ok": False, "error": "Access denied: Path escapes workspace root."}
-        if not os.path.exists(target):
-            return {"ok": False, "error": f"File not found: {rel_path}"}
-        with open(target, "r", encoding="utf-8", errors="replace") as f:
-            content = f.read(50000)
-        return {"ok": True, "content": content}
-
-    elif name == "write_file":
-        rel_path = args.get("path", "")
-        content = args.get("content", "")
-        target = os.path.abspath(os.path.join(WORKSPACE_ROOT, rel_path))
-        if not target.startswith(WORKSPACE_ROOT):
-            return {"ok": False, "error": "Access denied: Path escapes workspace root."}
-        os.makedirs(os.path.dirname(target), exist_ok=True)
-        with open(target, "w", encoding="utf-8") as f:
-            f.write(content)
-        return {"ok": True, "written_bytes": len(content)}
-
-    return {"ok": False, "error": f"Unknown tool: {name}"}
 
 
 def run_cli():
@@ -202,29 +104,16 @@ def run_cli():
     console.clear()
     print_banner(current_model)
 
-    client = ollama.Client(host=OLLAMA_BASE_URL)
+    client = ollama.Client(host=settings.ollama_base_url)
 
     # Verify Ollama connection
     try:
         models_resp = client.list()
-        avail = [m.model for m in models_resp.models]
     except Exception as e:
-        console.print(f"[danger]✘ Cannot connect to Ollama at {OLLAMA_BASE_URL}[/danger]")
+        console.print(f"[danger]✘ Cannot connect to Ollama at {settings.ollama_base_url}[/danger]")
         console.print(f"[dim]Make sure Ollama is running: brew services start ollama[/dim]\n")
         return
 
-    # Canonical system instructions
-    system_prompt = (
-        "You are CodePilot, a software engineering assistant running locally. "
-        "Inspect the workspace before proposing edits, and use tools to inspect or edit files. "
-        "Always keep file edits inside the workspace."
-    )
-    prompt_file = os.path.join(os.getcwd(), "prompts", "SYSTEM_PROMPT.md")
-    if os.path.exists(prompt_file):
-        with open(prompt_file, "r") as f:
-            system_prompt = f.read()
-
-    conversation = [{"role": "system", "content": system_prompt}]
     last_traces: List[Dict[str, Any]] = []
 
     while True:
@@ -270,82 +159,35 @@ def run_cli():
                 ))
             continue
 
-        # Agent Execution Loop
-        conversation.append({"role": "user", "content": user_input})
-        last_traces = []
+        # Execute agent turn with rich status
+        with console.status(f"[bold cyan]Planning & running tools with {current_model}...[/bold cyan]", spinner="dots"):
+            response_text, steps = run_agent_turn(
+                user_prompt=user_input,
+                model_name=current_model,
+            )
 
-        with console.status(f"[bold cyan]Planning with {current_model}...[/bold cyan]", spinner="dots"):
-            try:
-                response = client.chat(
-                    model=current_model,
-                    messages=conversation,
-                    tools=AVAILABLE_TOOLS,
-                )
-            except Exception as e:
-                console.print(f"[danger]Model generation error:[/danger] {e}")
-                continue
+        last_traces = steps
 
-        # Check for tool calls (Ollama native or parsed)
-        from backend.app.smoke_test import extract_tool_calls
-        tool_calls = extract_tool_calls(response.message)
-
-        if tool_calls:
-            for tc in tool_calls:
-                fn_name = tc.get("name")
-                fn_args = tc.get("arguments", {})
-
-                # OpenCode tool call card
+        # Render each executed tool step in OpenCode style
+        if steps:
+            for s in steps:
                 call_text = Text()
-                call_text.append(f"Tool: {fn_name}\n", style="bold magenta")
-                call_text.append(f"Arguments: {json.dumps(fn_args, indent=2)}", style="dim cyan")
-                console.print(Panel(call_text, title=f"🛠️  Tool Call: {fn_name}", border_style="magenta", padding=(0, 1)))
+                call_text.append(f"Tool: {s['tool']}\n", style="bold magenta")
+                call_text.append(f"Arguments: {json.dumps(s.get('args', {}), indent=2)}\n", style="dim cyan")
+                call_text.append(f"Summary: {s.get('summary', '')}", style="white")
 
-                # Execute
-                start_time = time.time()
-                tool_output = execute_tool_safely(fn_name, fn_args)
-                latency = round((time.time() - start_time) * 1000, 1)
-
-                status_style = "green" if tool_output.get("ok") else "red"
-                status_icon = "✔" if tool_output.get("ok") else "✘"
-                console.print(f"[{status_style}]{status_icon} Executed in {latency}ms[/{status_style}] -> {tool_output.get('summary', str(tool_output)[:100])}")
-
-                last_traces.append({
-                    "tool": fn_name,
-                    "arguments": fn_args,
-                    "result": tool_output,
-                    "latency_ms": latency,
-                })
-
-                # Append to conversation
-                if getattr(response.message, "tool_calls", None):
-                    conversation.append(response.message)
-                    conversation.append({
-                        "role": "tool",
-                        "content": json.dumps(tool_output),
-                    })
-                else:
-                    conversation.append({"role": "assistant", "content": response.message.content or ""})
-                    conversation.append({"role": "user", "content": f"Tool '{fn_name}' returned: {json.dumps(tool_output)}. Now provide your final answer."})
-
-            # Final synthesis
-            with console.status(f"[bold cyan]Synthesizing final response...[/bold cyan]", spinner="dots"):
-                try:
-                    final_res = client.chat(
-                        model=current_model,
-                        messages=conversation,
-                    )
-                    final_text = final_res.message.content or ""
-                    conversation.append(final_res.message)
-                except Exception as e:
-                    console.print(f"[danger]Synthesis error:[/danger] {e}")
-                    continue
-        else:
-            final_text = response.message.content or ""
-            conversation.append(response.message)
+                console.print(Panel(
+                    call_text,
+                    title=f"🛠️  Tool Execution: {s['tool']}",
+                    border_style="magenta",
+                    padding=(0, 1),
+                ))
+                latency = s.get("latency_ms", 0)
+                status_style = "green" if s.get("status") == "completed" else "red"
+                console.print(f"[{status_style}]✔ Completed in {latency}ms[/{status_style}]\n")
 
         # Render final markdown response in terminal
-        console.print()
-        console.print(Markdown(final_text))
+        console.print(Markdown(response_text))
 
 
 if __name__ == "__main__":
