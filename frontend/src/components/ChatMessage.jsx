@@ -119,6 +119,20 @@ function ExecutionTracePill({ steps = [] }) {
   );
 }
 
+// Strip any raw tool-call JSON/XML the model might have leaked into the reply
+const TOOL_CALL_RE = [
+  /\{"?name"?\s*:\s*"(?:list_files|read_file|search_files|run_command|write_file)".*?\}/gs,
+  /<tool_call>.*?<\/tool_call>/gis,
+  /<function=\w+>.*?<\/function>/gis,
+];
+
+function cleanContent(text) {
+  if (!text) return text;
+  let out = text;
+  for (const re of TOOL_CALL_RE) out = out.replace(re, '');
+  return out.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export default function ChatMessage({ message }) {
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
@@ -169,8 +183,7 @@ export default function ChatMessage({ message }) {
         {/* Markdown Content */}
         <div className="prose prose-invert prose-sm max-w-none text-[#edece6] leading-relaxed text-sm">
           <ReactMarkdown
-            components={{
-              code({ node, inline, className, children, ...props }) {
+            components={{              code({ node, inline, className, children, ...props }) {
                 const match = /language-(\w+)/.exec(className || '');
                 return !inline ? (
                   <div className="relative my-3 rounded-xl overflow-hidden border border-[#383834] bg-[#1a1a18]">
@@ -232,7 +245,7 @@ export default function ChatMessage({ message }) {
               }
             }}
           >
-            {message.content}
+            {cleanContent(message.content)}
           </ReactMarkdown>
         </div>
       </div>

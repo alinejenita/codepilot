@@ -83,6 +83,33 @@ def resolve_active_workspace(
     return settings.workspace_root
 
 
+
+# Patterns that indicate the model leaked a raw tool call JSON into its reply
+_TOOL_CALL_PATTERNS = [
+    # Full inline JSON: {"name": "list_files", ...}
+    re.compile(
+        r'\{["\']?name["\']?\s*:\s*["\'](?:list_files|read_file|search_files|run_command|write_file)["\'].*?\}',
+        re.DOTALL,
+    ),
+    # XML-style: <tool_call>...</tool_call>
+    re.compile(r'<tool_call>.*?</tool_call>', re.DOTALL | re.IGNORECASE),
+    # Function-call text pattern: <function=list_files> ... </function>
+    re.compile(r'<function=\w+>.*?</function>', re.DOTALL | re.IGNORECASE),
+]
+
+
+def _clean_final_answer(text: str) -> str:
+    """Remove any leaked raw tool-call JSON or XML from the model's final reply."""
+    if not text:
+        return text
+    cleaned = text
+    for pattern in _TOOL_CALL_PATTERNS:
+        cleaned = pattern.sub('', cleaned)
+    # Collapse runs of blank lines left behind
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
+    return cleaned
+
+
 def run_agent_turn(
     user_prompt: str,
     model_name: str = None,
@@ -100,9 +127,11 @@ def run_agent_turn(
         "You are CodePilot, a software engineering assistant running locally.\n"
         "Your task is to inspect codebases, read files, and answer the user's questions clearly.\n"
         f"Active target directory: {active_workspace}\n"
-        "To inspect files, ALWAYS use tool calls (list_files, read_file). "
-        "Do NOT write out the JSON tool call as text in your explanation—emit the function call directly. "
-        "Keep file operations within the active target directory."
+        "RULES:\n"
+        "1. When you need to inspect files, emit a TOOL CALL (function call) — never write JSON tool calls as plain text.\n"
+        "2. Your final answer must be clean prose or markdown. NEVER include raw JSON like {\"name\": \"...\", \"arguments\": {...}} in your reply.\n"
+        "3. Keep file operations within the active target directory.\n"
+        "4. Be concise and direct. After getting tool results, synthesize a human-readable answer."
     )
 
     messages: List[Dict[str, Any]] = [
@@ -140,7 +169,7 @@ def run_agent_turn(
 
         # If no tool calls were emitted, we have the final answer
         if not tool_calls:
-            final_answer = res.message.content or "Task completed."
+            final_answer = _clean_final_answer(res.message.content or "Task completed.")
             return final_answer, steps, active_workspace
 
         # Execute requested tools
@@ -204,6 +233,6 @@ def run_agent_turn(
     try:
         messages.append({"role": "user", "content": "Please synthesize your final answer now."})
         final_res = client.chat(model=model, messages=messages)
-        return final_res.message.content or "Completed.", steps, active_workspace
+        return _clean_final_answer(final_res.message.content or "Completed."), steps, active_workspace
     except Exception:
         return "Stopped: maximum iterations reached.", steps, active_workspace
