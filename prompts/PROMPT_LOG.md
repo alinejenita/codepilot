@@ -137,3 +137,24 @@ Full-stack Web UI and backend are live and connected.
 
 ### Current status
 Both the Claude-style Web UI and OpenCode-style CLI are fully implemented and verified.
+
+
+---
+
+## 2026-11-18 — Multi-Turn History Persistence & Bracket-Depth Tool Parsing Fix
+
+### Issues diagnosed
+1. **Raw JSON Leak:** When the local LLM generated conversational text before its JSON tool call (e.g. `To determine what is used to build the frontend... {"name": "list_files", ...}`), simple `json.loads` threw an error and treated the raw text + JSON as the final assistant response rather than executing the tool.
+2. **Context Amnesia Across Turns:** The frontend was only transmitting `message: prompt` without prior chat history or active workspace path, causing turn 2 (`what is used to build the frontend?`) to lose the context that turn 1 was inspecting `/Users/jenny/Development/projects/papersynth`.
+
+### Work completed
+- Implemented bracket-depth JSON scanner (`find_json_tool_objects`) in `backend/app/smoke_test.py` and `backend/app/agent/loop.py` that reliably detects and extracts tool calls regardless of leading or trailing conversational chatter.
+- Added multi-turn conversation memory: `frontend/src/services/api.js` and `frontend/src/App.jsx` now pass `history` and `workspace` with each request.
+- Configured dynamic workspace resolution in `backend/app/agent/loop.py` to maintain active repository paths across multiple turns.
+- Started Uvicorn with `--reload` to ensure real-time module updates.
+- Verified test sequence: Turn 1 (explain codebase with path) -> Turn 2 ("what is used to build the frontend?") -> accurately answers **React** (and correctly inspects `frontend/package.json` with tools).
+
+### Commands and tests
+- `uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000` — RUNNING
+- `curl -X POST http://127.0.0.1:8000/api/chat` (Multi-turn) — PASS (Response: "The frontend of the PaperSynth application is built using React.")
+- `curl -X POST http://127.0.0.1:8000/api/chat` (Read `package.json`) — PASS (Tools executed: `read_file`, correctly listed dependencies: `axios`, `lucide-react`, `react`, `react-dom`)
