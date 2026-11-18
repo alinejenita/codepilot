@@ -158,3 +158,60 @@ Both the Claude-style Web UI and OpenCode-style CLI are fully implemented and ve
 - `uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000` — RUNNING
 - `curl -X POST http://127.0.0.1:8000/api/chat` (Multi-turn) — PASS (Response: "The frontend of the PaperSynth application is built using React.")
 - `curl -X POST http://127.0.0.1:8000/api/chat` (Read `package.json`) — PASS (Tools executed: `read_file`, correctly listed dependencies: `axios`, `lucide-react`, `react`, `react-dom`)
+
+
+---
+
+## 2026-11-18 — Fix: Leaked Tool-Call JSON in UI Responses
+
+### Prompt given
+"unnecessary codes given here" (screenshot showing raw `{"name": "list_files", ...}` JSON rendering in the chat UI)
+
+### Problem diagnosed
+`qwen2.5-coder:7b` sometimes emits tool calls as plain-text JSON in its `content` field instead of structured native `tool_calls`. Because `loop.py` was forwarding raw `content` directly as the final answer, the JSON bled into the UI chat bubble as visible text — breaking the user experience.
+
+### Work completed
+- Added `_clean_final_answer()` to `backend/app/agent/loop.py` using three regex patterns to strip:
+  - Inline JSON tool calls: `{"name": "list_files", ...}`
+  - XML-style tags: `<tool_call>...</tool_call>`
+  - Function-call format: `<function=list_files>...</function>`
+- Applied `_clean_final_answer()` at both final-answer return points (normal exit and max-iterations fallback).
+- Strengthened the agent system prompt with explicit rules: "NEVER include raw JSON in your reply — emit function calls via the tool-calling interface."
+- Added `cleanContent()` in `frontend/src/components/ChatMessage.jsx` as a second safety net that strips the same patterns before rendering markdown.
+
+### Files changed
+- `backend/app/agent/loop.py` — `_clean_final_answer()` + stronger system prompt
+- `frontend/src/components/ChatMessage.jsx` — `cleanContent()` applied before `ReactMarkdown`
+
+### Commands and tests
+- Backend restarted: `source .venv/bin/activate && uvicorn backend.app.main:app --reload` — RUNNING
+- Verified in UI: tool execution trace pill shows correctly; response content is clean prose/markdown only
+
+### Current status
+UI responses are now clean. Tool calls are hidden in the collapsible Execution Trace Pill only.
+
+---
+
+## 2026-11-18 — Docs: README and PROMPT_LOG Update + GitHub Push Prep
+
+### Prompt given
+"let's push to github now, let's update the prompt log and update the readme files"
+
+### Work completed
+- Created `README.md` from scratch with full project documentation:
+  - Overview, feature list, project structure tree
+  - Prerequisites, step-by-step setup and installation
+  - Run commands for backend, Web UI, and CLI
+  - CLI slash command reference table
+  - API endpoint documentation with example request body
+  - Architecture diagram (ASCII)
+  - Model comparison table
+  - Known limitations section
+- Appended all 2026-11-18 session entries to `prompts/PROMPT_LOG.md`
+
+### Files created or changed
+- `README.md` — created (full project documentation)
+- `prompts/PROMPT_LOG.md` — updated with all session entries
+
+### Current status
+Repository is clean and documented. Ready for first GitHub push.
