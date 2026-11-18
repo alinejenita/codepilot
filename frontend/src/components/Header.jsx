@@ -1,113 +1,93 @@
 import React from 'react';
 import { 
+  PanelLeft, 
+  FolderGit2, 
   Cpu, 
-  Layers, 
-  Terminal, 
-  Activity, 
   RefreshCw,
-  FolderGit2
+  Sparkles,
+  ChevronDown
 } from 'lucide-react';
 
-export default function Header({ 
-  currentModel, 
-  onModelChange, 
-  availableModels = [], 
-  health, 
+export default function Header({
+  currentModel,
+  onModelChange,
+  availableModels = [],
+  health,
   onRefreshHealth,
-  showActivityPanel,
-  onToggleActivityPanel,
   showWorkspacePanel,
-  onToggleWorkspacePanel
+  onToggleWorkspacePanel,
+  isSidebarOpen,
+  onToggleSidebar,
+  currentChatTitle = "New Chat"
 }) {
   return (
-    <header className="h-14 border-b border-[#1e293b] bg-[#0d121f]/90 backdrop-blur px-6 flex items-center justify-between z-10 shrink-0">
-      {/* Left: Active Status */}
-      <div className="flex items-center space-x-3">
-        <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
-          <Layers size={16} className="text-blue-400" />
-          <span>Local Agent Session</span>
-        </div>
+    <header className="h-13 border-b border-[#31312e] bg-[#181816]/95 backdrop-blur px-4 flex items-center justify-between shrink-0 z-10 text-[#edece6]">
+      {/* Left: Sidebar toggle & Title */}
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          onClick={onToggleSidebar}
+          title="Toggle Sidebar"
+          className="p-1.5 rounded-lg text-[#9c9a92] hover:text-[#edece6] hover:bg-[#262624] transition-colors"
+        >
+          <PanelLeft size={17} />
+        </button>
 
-        <div className="h-4 w-px bg-slate-800" />
-
-        <div className="flex items-center gap-1.5 text-xs">
-          <span className="text-slate-400">Status:</span>
-          {health?.ollama_connected ? (
-            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              Ollama Ready (Metal)
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full font-medium">
-              Ollama Standby
-            </span>
-          )}
-        </div>
+        <h2 className="text-xs font-medium text-[#edece6] truncate max-w-xs sm:max-w-md">
+          {currentChatTitle}
+        </h2>
       </div>
 
-      {/* Right: Model Selector & Panel Toggles */}
-      <div className="flex items-center space-x-3">
-        {/* Model dropdown */}
-        <div className="flex items-center gap-2 bg-[#121a2d] border border-slate-700/60 rounded-lg px-2.5 py-1 text-xs">
-          <Cpu size={14} className="text-indigo-400" />
-          <span className="text-slate-400 text-[11px]">Model:</span>
+      {/* Right: Model Pill & Workspace Toggle */}
+      <div className="flex items-center gap-2">
+        {/* Claude-style Model Pill Selector */}
+        <div className="relative flex items-center gap-1.5 bg-[#242422] hover:bg-[#2b2b28] border border-[#383834] rounded-full px-3 py-1 text-xs transition-colors">
+          <span className="w-2 h-2 rounded-full bg-[#d97757]"></span>
           <select
             value={currentModel}
             onChange={(e) => onModelChange(e.target.value)}
-            className="bg-transparent text-slate-200 font-mono text-xs focus:outline-none cursor-pointer"
+            className="bg-transparent text-[#edece6] font-mono text-[11px] focus:outline-none cursor-pointer pr-4 appearance-none"
           >
             {availableModels.length > 0 ? (
               availableModels.map((m) => (
-                <option key={m} value={m} className="bg-[#0f172a] text-slate-200">
+                <option key={m} value={m} className="bg-[#1f1f1d] text-[#edece6]">
                   {m}
                 </option>
               ))
             ) : (
               <>
-                <option value="qwen2.5-coder:7b" className="bg-[#0f172a] text-slate-200">
+                <option value="qwen2.5-coder:7b" className="bg-[#1f1f1d] text-[#edece6]">
                   qwen2.5-coder:7b (Recommended)
                 </option>
-                <option value="qwen3.5:4b" className="bg-[#0f172a] text-slate-200">
+                <option value="qwen3.5:4b" className="bg-[#1f1f1d] text-[#edece6]">
                   qwen3.5:4b
                 </option>
               </>
             )}
           </select>
+          <ChevronDown size={11} className="text-[#8a8880] pointer-events-none -ml-3" />
         </div>
 
-        {/* Refresh Status */}
-        <button
-          onClick={onRefreshHealth}
-          title="Refresh Ollama Connection"
-          className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition-colors"
-        >
-          <RefreshCw size={14} />
-        </button>
-
-        {/* Workspace Explorer Toggle */}
+        {/* Workspace explorer pill */}
         <button
           onClick={onToggleWorkspacePanel}
-          className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-full border transition-all ${
             showWorkspacePanel
-              ? 'bg-blue-600/20 text-blue-300 border-blue-500/40 shadow-sm shadow-blue-500/10'
-              : 'bg-[#121a2d] text-slate-300 border-slate-700/60 hover:bg-slate-800'
+              ? 'bg-[#d97757]/15 text-[#e08465] border-[#d97757]/40 font-medium'
+              : 'bg-[#242422] text-[#9c9a92] border-[#383834] hover:text-[#edece6] hover:bg-[#2b2b28]'
           }`}
+          title="Toggle Workspace File Explorer"
         >
-          <FolderGit2 size={14} className="text-blue-400" />
-          <span>Workspace</span>
+          <FolderGit2 size={13} className="text-cyan-400" />
+          <span className="text-[11px] font-mono hidden sm:inline">./workspace</span>
         </button>
 
-        {/* Activity Panel Toggle */}
+        {/* Refresh status */}
         <button
-          onClick={onToggleActivityPanel}
-          className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-lg border transition-all ${
-            showActivityPanel
-              ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/40 shadow-sm shadow-indigo-500/10'
-              : 'bg-[#121a2d] text-slate-300 border-slate-700/60 hover:bg-slate-800'
-          }`}
+          onClick={onRefreshHealth}
+          title="Refresh connection"
+          className="p-1.5 text-[#8a8880] hover:text-[#edece6] hover:bg-[#262624] rounded-lg transition-colors"
         >
-          <Activity size={14} className="text-indigo-400" />
-          <span>Tool Activity</span>
+          <RefreshCw size={13} />
         </button>
       </div>
     </header>
