@@ -13,7 +13,6 @@ export async function fetchHealth() {
     if (!res.ok) throw new Error(`Health check failed: ${res.statusText}`);
     return await res.json();
   } catch (err) {
-    // If FastAPI isn't running yet, check Ollama directly at 11434
     try {
       const ollamaRes = await fetch('http://127.0.0.1:11434/api/tags');
       if (ollamaRes.ok) {
@@ -29,7 +28,7 @@ export async function fetchHealth() {
         };
       }
     } catch {
-      // both offline
+      // offline
     }
     return {
       status: 'offline',
@@ -42,20 +41,15 @@ export async function fetchHealth() {
   }
 }
 
-export async function sendChatMessage({ message, model = 'qwen2.5-coder:7b' }) {
-  try {
-    const res = await fetch(`${API_BASE}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, model }),
-    });
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.detail || `Server error: ${res.statusText}`);
-    }
-    return await res.json();
-  } catch (err) {
-    // Fallback if FastAPI server isn't running yet
-    throw err;
+export async function sendChatMessage({ message, model = 'qwen2.5-coder:7b', history = [], workspace = null }) {
+  const res = await fetch(`${API_BASE}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, model, history, workspace }),
+  });
+  if (!res.ok) {
+    const errorData = await res.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Server error: ${res.statusText}`);
   }
+  return await res.json();
 }

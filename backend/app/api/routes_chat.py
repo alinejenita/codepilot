@@ -12,6 +12,8 @@ router = APIRouter(prefix="/api", tags=["chat"])
 class ChatRequest(BaseModel):
     message: str = Field(..., description="The user's coding prompt or question")
     model: Optional[str] = Field(default=None, description="Optional model override")
+    history: Optional[List[Dict[str, str]]] = Field(default=[], description="Prior conversation messages")
+    workspace: Optional[str] = Field(default=None, description="Active workspace path")
 
 
 class ToolStep(BaseModel):
@@ -28,6 +30,7 @@ class ChatResponse(BaseModel):
     status: str
     response: str
     steps: List[ToolStep] = []
+    workspace: Optional[str] = None
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -35,9 +38,11 @@ def handle_chat(payload: ChatRequest):
     run_id = str(uuid.uuid4())
 
     try:
-        response_text, steps_data = run_agent_turn(
+        response_text, steps_data, active_ws = run_agent_turn(
             user_prompt=payload.message,
             model_name=payload.model,
+            history=payload.history,
+            workspace=payload.workspace,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Agent loop error: {str(e)}")
@@ -59,4 +64,5 @@ def handle_chat(payload: ChatRequest):
         status="completed",
         response=response_text,
         steps=steps,
+        workspace=active_ws,
     )

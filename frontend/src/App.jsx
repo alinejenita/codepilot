@@ -163,8 +163,18 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      // 2. Call FastAPI backend (/api/chat)
-      const data = await sendChatMessage({ message: prompt, model: currentModel });
+      // Build conversation history (excluding initial welcome banner)
+      const historyPayload = currentSession.messages
+        .filter((m) => m.id !== 'welcome-msg')
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      // 2. Call FastAPI backend (/api/chat) with history and workspace
+      const data = await sendChatMessage({
+        message: prompt,
+        model: currentModel,
+        history: historyPayload,
+        workspace: currentSession.workspace,
+      });
 
       const assistantMsg = {
         id: assistantMsgId,
@@ -177,7 +187,11 @@ export default function App() {
       setSessions((prev) =>
         prev.map((s) =>
           s.id === currentSessionId
-            ? { ...s, messages: [...updatedMessages, assistantMsg] }
+            ? {
+                ...s,
+                workspace: data.workspace || s.workspace,
+                messages: [...updatedMessages, assistantMsg],
+              }
             : s
         )
       );
