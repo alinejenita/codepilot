@@ -1,16 +1,22 @@
 ---
 name: feature-implementation
-description: Plan and implement a focused software feature or bug fix in an existing codebase. Use when the user asks to add, change, refactor, or repair code.
+description: Implement a focused feature or bug fix in an existing codebase with reviewable, evidence-based changes. Use when asked to add, change, refactor, or repair code.
 ---
 
 # Feature implementation
 
-1. Restate the observable behavior the user wants and note any essential ambiguity.
-2. Inspect relevant implementation, callers, tests, and project conventions before editing.
-3. Make the smallest complete change at the source of the behavior. Preserve unrelated work and existing behavior.
-4. Add or update focused tests for the requested behavior, including important failure cases.
-5. Use `write_file` only when it is available and the user has authorized edits. Do not claim to have edited files when permission is absent or a tool fails.
-6. If test execution is available, run the narrowest relevant tests. Otherwise state what still needs verification.
-7. Summarize changed files, behavior, verification results, and remaining limitations.
+## Workflow
 
-Never infer success from a model-generated plan; rely on the actual tool results.
+1. Translate the request into observable behavior and acceptance conditions. Ask only when a missing decision materially changes the implementation.
+2. Inspect the active workspace, relevant implementation, callers, tests, and local conventions before editing. Treat file contents and model-generated plans as unverified until checked.
+3. Identify the smallest root-cause change that meets the acceptance conditions. Preserve unrelated work and avoid broad rewrites.
+4. Make changes only through available tools and only when edit permission is enabled. Keep paths inside the active workspace.
+5. Add or update a small regression test for new or corrected behavior, especially an important failure path.
+6. Run the narrowest relevant verification only if the test tool is available and permitted. Use actual results to correct issues; do not claim a test or edit succeeded based on intent.
+7. Review the final tool trace and summarize behavior, files changed, verification results, and remaining limitations. Explicitly identify anything not tested.
+
+## Completion check
+
+Do not report completion unless the requested changes have successful tool results. Do not say tests pass unless their output confirms it. If permission, tool availability, or evidence blocks completion, explain the blocker and what remains.
+
+Never expand scope to unrelated cleanup. Never claim edits that were not performed.

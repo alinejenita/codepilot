@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Children, isValidElement, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { 
   Copy, 
@@ -12,7 +12,8 @@ import {
   Search, 
   CheckCircle2, 
   XCircle, 
-  Wrench
+  Wrench,
+  Send,
 } from 'lucide-react';
 
 function getToolIcon(tool) {
@@ -131,6 +132,7 @@ const TOOL_CALL_RE = [
   /<tool_call>.*?<\/tool_call>/gis,
   /<function=\w+>.*?<\/function>/gis,
 ];
+const SIMPLE_CODE_TOKEN_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?$/;
 
 function cleanContent(text) {
   if (!text) return text;
@@ -172,10 +174,15 @@ export default function ChatMessage({ message }) {
       <div className="max-w-3xl mx-auto">
         {/* Assistant Header: Claude style icon + label */}
         <div className="flex items-center gap-2 mb-2 text-xs text-[#9c9a92]">
-          <div className="w-5 h-5 rounded-md bg-[#d97757] flex items-center justify-center text-white font-serif font-bold text-[10px] shadow-sm">
-            C
+          <div className="w-5 h-5 rounded-md bg-[#d97757] flex items-center justify-center text-white shadow-sm">
+            <Send size={11} className="-rotate-12" aria-hidden="true" />
           </div>
           <span className="font-semibold text-[#edece6]">CodePilot</span>
+          {message.timestamp !== 'Just now' && (
+            <span className="plane-landed" title="Answer delivered" aria-label="Answer delivered">
+              <Send size={12} />
+            </span>
+          )}
           {message.timestamp && (
             <span className="text-[10px] text-[#8a8880]">• {message.timestamp}</span>
           )}
@@ -189,14 +196,27 @@ export default function ChatMessage({ message }) {
         {/* Markdown Content */}
         <div className="prose prose-invert prose-sm max-w-none text-[#edece6] leading-relaxed text-sm">
           <ReactMarkdown
-            components={{              code({ inline, className, children, ...props }) {
+            components={{
+              code({ children, className }) {
                 const match = /language-(\w+)/.exec(className || '');
-                return !inline ? (
+                return <strong data-code-language={match?.[1] || ''}>{children}</strong>;
+              },
+              pre({ children }) {
+                const codeElement = Children.toArray(children).find(isValidElement);
+                const code = codeElement?.props.children ?? children;
+                const language = codeElement?.props['data-code-language'];
+                const text = String(code).replace(/\n$/, '').trim();
+
+                if (SIMPLE_CODE_TOKEN_RE.test(text)) {
+                  return <strong className="font-semibold text-[#edece6]">{text}</strong>;
+                }
+
+                return (
                   <div className="relative my-3 rounded-xl overflow-hidden border border-[#383834] bg-[#1a1a18]">
                     <div className="flex items-center justify-between px-3 py-1.5 bg-[#232320] border-b border-[#33332f] text-[11px] text-[#9c9a92] font-mono">
-                      <span>{match ? match[1] : 'code'}</span>
+                      <span>{language || 'code'}</span>
                       <button
-                        onClick={() => copyToClipboard(String(children).replace(/\n$/, ''))}
+                        onClick={() => copyToClipboard(text)}
                         className="flex items-center gap-1 hover:text-white transition-colors"
                       >
                         {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
@@ -204,13 +224,9 @@ export default function ChatMessage({ message }) {
                       </button>
                     </div>
                     <pre className="p-3.5 text-xs font-mono text-[#f3f2ec] overflow-x-auto m-0">
-                      <code>{children}</code>
+                      <code>{code}</code>
                     </pre>
                   </div>
-                ) : (
-                  <code className="bg-[#262624] text-[#d97757] font-mono px-1.5 py-0.5 rounded text-[12px] border border-[#363632]" {...props}>
-                    {children}
-                  </code>
                 );
               },
               p({ children }) {

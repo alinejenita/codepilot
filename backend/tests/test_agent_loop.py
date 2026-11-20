@@ -7,13 +7,18 @@ from backend.app.config import settings
 
 
 def native_call(name, arguments):
+    return native_calls((name, arguments))
+
+
+def native_calls(*calls):
     return SimpleNamespace(
         message=SimpleNamespace(
             content="",
             tool_calls=[
                 SimpleNamespace(
                     function=SimpleNamespace(name=name, arguments=arguments),
-                ),
+                )
+                for name, arguments in calls
             ],
         ),
     )
@@ -50,6 +55,98 @@ def test_agent_searches_then_answers_with_real_tool_result(monkeypatch, tmp_path
     assert steps[0]["result"]["matches"][0]["path"] == "module.py"
     assert client.calls[0]["keep_alive"] == settings.ollama_keep_alive
     assert "write_file" not in {tool["function"]["name"] for tool in client.calls[0]["tools"]}
+
+
+def test_unknown_tool_fails_closed_without_trusting_another_model_answer(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
+    client = FakeClient([
+        native_call("Alice", {"operation": "memory_type_identifier"}),
+        final_answer("A fabricated answer that must never be returned."),
+    ])
+    monkeypatch.setattr(loop.ollama, "Client", lambda **_: client)
+
+    answer, steps, _ = loop.run_agent_turn("Tell me about a memory type identifier operation.")
+
+    assert len(steps) == 1
+    assert steps[0]["tool"] == "Alice"
+    assert steps[0]["status"] == "failed"
+    assert "not available" in steps[0]["result"]["error"]
+    assert "can't answer this reliably" in answer
+    assert "Alice" in answer
+    assert len(client.calls) == 1
+
+
+def test_unknown_tool_prevents_other_calls_in_same_response_from_running(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
+    (tmp_path / "secret.txt").write_text("must not be read", encoding="utf-8")
+    client = FakeClient([native_calls(
+        ("Alice", {}),
+        ("read_file", {"path": "secret.txt"}),
+    )])
+    monkeypatch.setattr(loop.ollama, "Client", lambda **_: client)
+
+    answer, steps, _ = loop.run_agent_turn("Explain this request.")
+
+    assert len(steps) == 2
+    assert steps[0]["tool"] == "Alice"
+    assert steps[0]["status"] == "failed"
+    assert steps[1]["tool"] == "read_file"
+    assert steps[1]["status"] == "failed"
+    assert "not run" in steps[1]["result"]["error"].lower()
+    assert "unavailable tool" in answer
+    assert "must not be read" not in answer
+    assert len(client.calls) == 1
+
+
+def test_stack_question_uses_history_for_skill_and_evidence_gate(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
+    backend_dir = tmp_path / "backend"
+    frontend_dir = tmp_path / "frontend"
+    backend_dir.mkdir()
+    frontend_dir.mkdir()
+    (backend_dir / "requirements.txt").write_text("fastapi==1.0\n", encoding="utf-8")
+    (frontend_dir / "package.json").write_text('{"dependencies":{"react":"18"}}\n', encoding="utf-8")
+    client = FakeClient([
+        final_answer("The stack is FastAPI and React."),
+        native_call("read_file", {"path": "backend/requirements.txt"}),
+        native_call("read_file", {"path": "frontend/package.json"}),
+        final_answer("The backend declares FastAPI in `backend/requirements.txt`; the frontend declares React in `frontend/package.json`."),
+    ])
+    monkeypatch.setattr(loop.ollama, "Client", lambda **_: client)
+
+    answer, steps, _ = loop.run_agent_turn(
+        "You can go through yourself.",
+        history=[{
+            "role": "user",
+            "content": "What technologies are used for backend and frontend?",
+        }],
+    )
+
+    assert [step["tool"] for step in steps] == ["read_file", "read_file"]
+    assert all(step["status"] == "completed" for step in steps)
+    assert "workspace-exploration" in client.calls[0]["messages"][0]["content"]
+    assert "backend/requirements.txt" in answer
+    assert len(client.calls) == 4
+
+
+def test_stack_answer_is_withheld_after_reading_only_readme(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path))
+    (tmp_path / "README.md").write_text("Backend: FastAPI. Frontend: React.\n", encoding="utf-8")
+    client = FakeClient([
+        native_call("read_file", {"path": "README.md"}),
+        final_answer("The backend uses FastAPI and the frontend uses React."),
+    ])
+    monkeypatch.setattr(loop.ollama, "Client", lambda **_: client)
+
+    answer, steps, _ = loop.run_agent_turn(
+        "What technologies are used for backend and frontend?",
+        max_iterations=2,
+    )
+
+    assert len(steps) == 1
+    assert steps[0]["status"] == "completed"
+    assert "couldn't verify the backend/frontend stack" in answer
+    assert len(client.calls) == 2
 
 
 def test_agent_only_writes_when_user_enables_edits(monkeypatch, tmp_path):

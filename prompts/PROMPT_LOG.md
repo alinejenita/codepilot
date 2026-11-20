@@ -384,3 +384,42 @@ The CLI can target a user-selected existing directory while preserving workspace
 ### Verification
 - `.venv/bin/python -m pytest backend/tests/test_skills.py -q` — PASS (8 tests)
 - `git diff --check` — PASS
+
+---
+
+## 2026-11-19 — Evidence-Guided Agent Loop and Skill Workflows
+
+### Work completed
+- Agent skill selection now considers recent user conversation context, so follow-up prompts can retain the relevant exploration workflow.
+- Added a server-side evidence gate for backend/frontend and project stack questions: the agent must successfully read at least two distinct non-README files before returning a stack answer. If the iteration budget ends without that evidence, it returns an explicit unverified response instead of a generated stack claim.
+- Reinforced the system prompt to tie project-specific statements to inspected files, distinguish evidence from inference, and report successful changes/checks only when tool results confirm them.
+- Reworked all four bundled skills into ordered workflows with explicit completion checks, scope limits, and truthful verification/reporting guidance.
+- Updated the README with the evidence gate and its limitation: this reduces unsupported stack answers but cannot guarantee zero hallucinations or independently verify every model claim.
+
+### Verification
+- `.venv/bin/python -m pytest backend/tests -q` — PASS (38 tests)
+- `.venv/bin/python -m compileall -q backend/app/agent backend/tests` — PASS
+- `git diff --check` — PASS
+
+### Focused regression coverage
+- A follow-up stack question uses earlier user context, rejects a premature answer, reads two non-README files, and then returns the answer.
+- A stack answer based on only `README.md` is withheld when the iteration budget expires.
+
+---
+
+## 2026-11-19 — Recovery from Unsupported Model Tool Calls
+
+### Work completed
+- Agent instructions now explicitly prohibit inventing tool names.
+- When a model requests an unregistered tool, CodePilot records the failure, tells the model not to retry tools, and makes a tool-free recovery request to answer the original user task or ask a focused clarification.
+- If the model requests another tool during recovery, CodePilot stops without executing it and returns an explicit error.
+- Added regression tests for direct-answer recovery and stopping repeated tool requests; documented the behavior in the README.
+
+### Verification
+- `.venv/bin/python -m pytest backend/tests -q` — PASS (40 tests)
+- `git diff --check` — PASS
+
+### Correction — Fail closed instead of retrying the model
+- The tool-free retry still relied on a second unverified model answer, so it did not satisfy the goal of avoiding unsupported claims.
+- Replaced that retry with a deterministic failure response when any unsupported tool is requested. No requested tools in that response are executed, including otherwise valid calls bundled with the unsupported one.
+- Regression tests assert that no second model response is used and that valid calls in a mixed response are not run.

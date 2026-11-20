@@ -7,7 +7,8 @@ import {
   FolderGit2, 
   Sparkles, 
   ShieldCheck,
-  Clock
+  Clock,
+  Send,
 } from 'lucide-react';
 
 export default function Sidebar({
@@ -33,7 +34,7 @@ export default function Sidebar({
       <div className="p-3.5 flex items-center justify-between border-b border-[#2b2b28]">
         <div className="flex items-center space-x-2">
           <div className="w-7 h-7 rounded-lg bg-[#d97757] flex items-center justify-center text-white font-serif font-bold text-sm shadow-sm">
-            C
+            <Send size={14} className="-rotate-12" aria-hidden="true" />
           </div>
           <div>
             <h1 className="font-semibold text-sm tracking-tight text-[#f3f2ec]">

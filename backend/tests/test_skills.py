@@ -104,7 +104,7 @@ def test_agent_loads_relevant_skill_before_answering(monkeypatch, tmp_path):
     assert "feature-implementation" in system_prompt
     assert steps[0]["tool"] == "load_skill"
     assert steps[0]["status"] == "completed"
-    assert "Inspect relevant implementation" in skill_result["instructions"]
+    assert "relevant implementation, callers, tests" in skill_result["instructions"]
     assert answer.startswith("I will inspect")
 
 
@@ -134,7 +134,7 @@ def test_exploration_skill_requires_backend_and_frontend_evidence():
 
     assert result["ok"] is True
     instructions = result["instructions"]
-    assert "do not answer from `README.md` alone" in instructions
-    assert "inspect dependency manifests for each relevant app or service" in instructions
-    assert "Check backend and frontend separately" in instructions
-    assert "inspect its entry point, imports, and framework configuration" in instructions
+    assert "Do not answer a backend/frontend technology question from `README.md` alone." in instructions
+    assert "Read relevant dependency manifests and configuration" in instructions
+    assert "investigate each side independently" in instructions
+    assert "inspect that component's entry points, imports, and framework configuration" in instructions

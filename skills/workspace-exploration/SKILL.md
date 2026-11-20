@@ -1,20 +1,24 @@
 ---
 name: workspace-exploration
-description: Inspect and understand an unfamiliar codebase before answering or changing it. Use for repository orientation, locating relevant files, tracing behavior, and finding existing conventions.
+description: Inspect an unfamiliar codebase and answer project-specific questions from source evidence. Use for repository orientation, architecture, dependency, framework, backend/frontend, or behavior questions.
 ---
 
 # Workspace exploration
 
-Use this workflow when a task depends on understanding an existing project.
+## Workflow
 
-1. Use the active workspace provided by CodePilot; do not ask the user to list or paste files that the tools can inspect.
-2. Start with `list_files` to understand the workspace layout. For large workspaces, narrow to likely directories.
-3. Use `search_files` for relevant symbols, behavior, tests, and existing patterns. Read the actual source and nearby tests with `read_file` before drawing conclusions.
-4. For questions about frameworks, technologies, or the backend/frontend stack, do not answer from `README.md` alone. After locating the project structure, inspect dependency manifests for each relevant app or service: for example `package.json`, `pyproject.toml`, `requirements.txt`, `Pipfile`, `Cargo.toml`, `go.mod`, or their equivalents. Check backend and frontend separately when both are asked about.
-5. If a side has no dependency manifest, inspect its entry point, imports, and framework configuration to identify technologies from implementation evidence. Do not invent a stack or treat a technology mentioned only in documentation as confirmed usage.
-6. In the answer, identify which files support each conclusion and distinguish declared dependencies from technologies verified in source/configuration. If the relevant files cannot be found or read, state that limitation instead of asking the user to enumerate files.
-7. Trace the relevant call path and identify how inputs, permissions, and errors flow through the code.
-8. Prefer existing helpers and conventions over introducing a parallel implementation.
-9. Report only findings supported by tool results. If the available tools cannot inspect something, say so.
+1. Use the active workspace and the tools available for this request. Do not ask the user to enumerate files that `list_files` can inspect.
+2. Start with `list_files`. Identify likely application roots, source folders, manifests, tests, and configuration. Narrow the listing when the repository is large.
+3. Turn the question into concrete evidence to collect. For a backend/frontend stack question, investigate each side independently.
+4. Read relevant dependency manifests and configuration. Common examples include `package.json`, `pyproject.toml`, `requirements.txt`, `Pipfile`, `Cargo.toml`, `go.mod`, `pom.xml`, and framework-specific config files.
+5. If a manifest is absent or inconclusive, inspect that component's entry points, imports, and framework configuration. For behavior questions, trace from the relevant input through implementation to output, using tests as corroborating evidence.
+6. Do not answer a backend/frontend technology question from `README.md` alone. Read at least two relevant non-README files. Prefer manifests; use source/configuration when manifests do not establish actual usage.
+7. Distinguish declared dependencies from technologies verified in source/configuration. A dependency declaration alone does not prove that a feature is used at runtime.
+8. Ground each important conclusion in the tool results. Cite the workspace-relative file path(s) supporting it. If files are missing, unreadable, truncated, or contradictory, state that limitation and avoid a confident conclusion.
+9. Keep the report scoped to the user's question. Separate observed facts from reasonable inferences.
 
-Do not modify files as part of exploration unless the user also asked for an implementation.
+## Completion check
+
+Before answering, confirm that you inspected the relevant files for every requested component, did not rely only on documentation claims, and can point to evidence for each conclusion. If not, continue inspecting or clearly say what remains unverified.
+
+This skill is read-only. Do not modify files unless the user separately requested implementation work.

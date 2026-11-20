@@ -4,22 +4,155 @@ import Header from './components/Header';
 import ChatMessage from './components/ChatMessage';
 import WorkspacePanel from './components/WorkspacePanel';
 import { fetchHealth, sendChatMessage } from './services/api';
-import { ArrowUp, Loader2, FolderSearch, Terminal, FileCode2 } from 'lucide-react';
+import { ArrowUp, Send, FolderSearch, Terminal, FileCode2 } from 'lucide-react';
 
 const STORAGE_KEY = 'codepilot_chat_sessions_v2';
 const CURRENT_ID_KEY = 'codepilot_current_session_id_v2';
 
-const DEFAULT_WELCOME_MESSAGE = {
-  id: 'welcome-msg',
-  role: 'assistant',
-  content: `I am **CodePilot**, your local coding agent running through Ollama.
+function RoamingPlane() {
+  const planeRef = useRef(null);
 
-I can inspect and search your configured workspace. Enable **Allow file edits** to create or replace files, or **Allow pytest** to run tests in a trusted workspace. General shell commands are not available.
+  useEffect(() => {
+    const plane = planeRef.current;
+    if (!plane) return undefined;
 
-Ask me a question or try one of the suggestions below to get started.`,
-  timestamp: 'Just now',
-  steps: [],
-};
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      plane.style.left = '50%';
+      plane.style.top = '50%';
+      plane.style.transform = 'translate(-50%, -50%)';
+      return undefined;
+    }
+
+    const getBounds = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      return {
+        minX: Math.min(48, width * 0.08),
+        maxX: width - Math.min(48, width * 0.08),
+        minY: Math.min(48, height * 0.08),
+        maxY: height - Math.min(48, height * 0.08),
+      };
+    };
+    const randomPoint = (bounds) => ({
+      x: bounds.minX + Math.random() * (bounds.maxX - bounds.minX),
+      y: bounds.minY + Math.random() * (bounds.maxY - bounds.minY),
+    });
+    const clampPoint = (point, bounds) => ({
+      x: Math.max(bounds.minX, Math.min(bounds.maxX, point.x)),
+      y: Math.max(bounds.minY, Math.min(bounds.maxY, point.y)),
+    });
+    const setPose = (x, y, angle, bank = 0, scale = 1) => {
+      plane.style.left = `${x}px`;
+      plane.style.top = `${y}px`;
+      plane.style.transform = `translate(-50%, -50%) rotate(${angle + Math.PI / 4 + bank}rad) scale(${scale})`;
+    };
+
+    let position = randomPoint(getBounds());
+    let heading = Math.random() * Math.PI * 2;
+    let bank = 0;
+    let scale = 1;
+    let lastFrameTime = performance.now();
+    let segment;
+    let frameId;
+    setPose(position.x, position.y, heading);
+
+    const createSegment = (startTime) => {
+      const bounds = getBounds();
+      position = clampPoint(position, bounds);
+      let end = randomPoint(bounds);
+      let dx = end.x - position.x;
+      let dy = end.y - position.y;
+      let distance = Math.hypot(dx, dy);
+      for (let attempt = 0; distance < 120 && attempt < 4; attempt += 1) {
+        end = randomPoint(bounds);
+        dx = end.x - position.x;
+        dy = end.y - position.y;
+        distance = Math.hypot(dx, dy);
+      }
+
+      const turn = Math.atan2(dy, dx) + (Math.random() - 0.5) * 1.4;
+      const handle = Math.min(distance * 0.38, 220);
+      const control1 = clampPoint({
+        x: position.x + Math.cos(heading) * handle,
+        y: position.y + Math.sin(heading) * handle,
+      }, bounds);
+      const control2 = clampPoint({
+        x: end.x - Math.cos(turn) * handle,
+        y: end.y - Math.sin(turn) * handle,
+      }, bounds);
+      const endHeading = Math.atan2(end.y - control2.y, end.x - control2.x);
+
+      return {
+        start: { ...position },
+        control1,
+        control2,
+        end,
+        endHeading,
+        startTime,
+        duration: Math.max(1800, Math.min(5500, distance / 0.16)),
+      };
+    };
+
+    const animate = (now) => {
+      if (!segment) segment = createSegment(now);
+      const progress = Math.min((now - segment.startTime) / segment.duration, 1);
+      const inverse = 1 - progress;
+      const { start, control1, control2, end } = segment;
+      const x = inverse ** 3 * start.x
+        + 3 * inverse ** 2 * progress * control1.x
+        + 3 * inverse * progress ** 2 * control2.x
+        + progress ** 3 * end.x;
+      const y = inverse ** 3 * start.y
+        + 3 * inverse ** 2 * progress * control1.y
+        + 3 * inverse * progress ** 2 * control2.y
+        + progress ** 3 * end.y;
+      const tangentX = 3 * inverse ** 2 * (control1.x - start.x)
+        + 6 * inverse * progress * (control2.x - control1.x)
+        + 3 * progress ** 2 * (end.x - control2.x);
+      const tangentY = 3 * inverse ** 2 * (control1.y - start.y)
+        + 6 * inverse * progress * (control2.y - control1.y)
+        + 3 * progress ** 2 * (end.y - control2.y);
+
+      const accelerationX = 6 * (
+        inverse * (control2.x - 2 * control1.x + start.x)
+        + progress * (end.x - 2 * control2.x + control1.x)
+      );
+      const accelerationY = 6 * (
+        inverse * (control2.y - 2 * control1.y + start.y)
+        + progress * (end.y - 2 * control2.y + control1.y)
+      );
+      const speedSquared = tangentX ** 2 + tangentY ** 2;
+      const curvature = speedSquared > 0.001
+        ? (tangentX * accelerationY - tangentY * accelerationX)
+          / (speedSquared * Math.sqrt(speedSquared))
+        : 0;
+      const targetBank = Math.max(-0.32, Math.min(0.32, curvature * 55));
+      const targetScale = 1 + Math.min(Math.abs(curvature) * 3, 0.05);
+      const response = 1 - Math.exp(-(now - lastFrameTime) / 180);
+      bank += (targetBank - bank) * response;
+      scale += (targetScale - scale) * response;
+      lastFrameTime = now;
+
+      setPose(x, y, Math.atan2(tangentY, tangentX), bank, scale);
+
+      if (progress === 1) {
+        position = end;
+        heading = segment.endHeading;
+        segment = createSegment(now);
+      }
+      frameId = window.requestAnimationFrame(animate);
+    };
+
+    frameId = window.requestAnimationFrame(animate);
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
+
+  return (
+    <div ref={planeRef} className="plane-roaming-global">
+      <Send size={18} />
+    </div>
+  );
+}
 
 export default function App() {
   // Load sessions from localStorage or initialize with default
@@ -28,7 +161,14 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((session) => ({
+            ...session,
+            messages: Array.isArray(session.messages)
+              ? session.messages.filter((message) => message.id !== 'welcome-msg')
+              : [],
+          }));
+        }
       }
     } catch (e) {
       console.warn('Could not parse saved sessions:', e);
@@ -36,9 +176,9 @@ export default function App() {
     return [
       {
         id: 'session-default',
-        title: 'Inspect workspace files',
+        title: 'New chat',
         createdAt: new Date().toISOString(),
-        messages: [DEFAULT_WELCOME_MESSAGE],
+        messages: [],
       },
     ];
   });
@@ -61,6 +201,7 @@ export default function App() {
   const [allowTests, setAllowTests] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [showWorkspacePanel, setShowWorkspacePanel] = useState(false);
+  const isSendingRef = useRef(false);
   const messagesEndRef = useRef(null);
 
   // Sync sessions to localStorage
@@ -107,7 +248,7 @@ export default function App() {
       id: newId,
       title: 'New chat',
       createdAt: new Date().toISOString(),
-      messages: [DEFAULT_WELCOME_MESSAGE],
+      messages: [],
     };
     setSessions([newSession, ...sessions]);
     setCurrentSessionId(newId);
@@ -121,7 +262,7 @@ export default function App() {
         id: freshId,
         title: 'New chat',
         createdAt: new Date().toISOString(),
-        messages: [DEFAULT_WELCOME_MESSAGE],
+        messages: [],
       }]);
       setCurrentSessionId(freshId);
     } else {
@@ -134,8 +275,9 @@ export default function App() {
 
   const handleSendMessage = async (textToSend) => {
     const prompt = (textToSend || inputValue).trim();
-    if (!prompt || isLoading) return;
+    if (!prompt || isLoading || isSendingRef.current) return;
 
+    isSendingRef.current = true;
     const allowEditsForRequest = allowEdits;
     const allowTestsForRequest = allowTests;
     setInputValue('');
@@ -173,9 +315,8 @@ export default function App() {
     setIsLoading(true);
 
     try {
-      // Build conversation history (excluding initial welcome banner)
+      // Build conversation history from previous turns.
       const historyPayload = currentSession.messages
-        .filter((m) => m.id !== 'welcome-msg')
         .map((m) => ({ role: m.role, content: m.content }));
 
       // 2. Call FastAPI backend (/api/chat) with history and workspace
@@ -227,6 +368,7 @@ Make sure the backend is active at \`http://127.0.0.1:8000\` and Ollama is runni
         )
       );
     } finally {
+      isSendingRef.current = false;
       setIsLoading(false);
     }
   };
@@ -285,12 +427,9 @@ Make sure the backend is active at \`http://127.0.0.1:8000\` and Ollama is runni
             {/* Thinking / Tool Execution Indicator */}
             {isLoading && (
               <div className="py-4 px-4 sm:px-6">
-                <div className="max-w-3xl mx-auto flex items-center gap-2.5 text-xs text-[#9c9a92]">
-                  <div className="w-5 h-5 rounded-md bg-[#2b2b27] border border-[#383834] flex items-center justify-center text-[#d97757]">
-                    <Loader2 size={12} className="animate-spin" />
-                  </div>
+                <div className="max-w-3xl mx-auto flex items-center gap-2.5 text-xs text-[#9c9a92]" role="status" aria-live="polite">
                   <span className="font-medium text-[#edece6]">
-                    CodePilot is planning actions & running tools...
+                    CodePilot is working on your answer...
                   </span>
                 </div>
               </div>
@@ -302,8 +441,8 @@ Make sure the backend is active at \`http://127.0.0.1:8000\` and Ollama is runni
         {/* Claude-style Floating Bottom Composer */}
         <div className="px-4 pb-5 pt-2 bg-gradient-to-t from-[#181816] via-[#181816] to-transparent shrink-0">
           <div className="max-w-3xl mx-auto space-y-2.5">
-            {/* Quick Starters (shown if only welcome message present) */}
-            {currentSession?.messages?.length <= 1 && (
+            {/* Quick Starters (shown for an empty chat) */}
+            {currentSession?.messages?.length === 0 && (
               <div className="flex flex-wrap gap-2 pb-1">
                 {promptStarters.map((starter, idx) => (
                   <button
@@ -378,6 +517,12 @@ Make sure the backend is active at \`http://127.0.0.1:8000\` and Ollama is runni
           </div>
         </div>
       </div>
+
+      {isLoading && (
+        <div className="plane-flight-overlay" aria-hidden="true">
+          <RoamingPlane />
+        </div>
+      )}
 
       {/* Workspace Panel Right Drawer */}
       {showWorkspacePanel && (

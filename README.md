@@ -22,6 +22,7 @@ CodePilot is a full-stack AI coding assistant designed to run locally through Ol
 ## Features
 
 - 🧠 **Multi-step agent loop** — model plans, calls tools, reads results, synthesizes answers
+- 🧾 **Evidence-gated stack answers** — backend/frontend technology answers require successful reads of two distinct non-README files
 - 🔎 **Workspace search** — bounded, case-insensitive search with file and line references
 - ✍️ **Opt-in file edits** — file writes are not available unless enabled for the request
 - 🧪 **Opt-in pytest runner** — runs only `python -m pytest` against a workspace-relative target; no general shell tool
@@ -213,7 +214,7 @@ For a direct request to create or change a file (for example, “create a calcul
 
 CodePilot supports bundled skills in the open Agent Skills directory format: each `skills/<name>/SKILL.md` contains YAML frontmatter with a matching lowercase kebab-case `name` and a `description`, followed by Markdown instructions. CodePilot includes only each skill's name and description in the model's system context. For common task signals, matching skill instructions are included automatically; otherwise, the model can call the read-only `load_skill` tool to load relevant guidance. The loader only accepts registered bundled skill names; it does not read arbitrary paths or execute skill files.
 
-Built-in skills cover [workspace exploration](./skills/workspace-exploration/SKILL.md), [feature implementation](./skills/feature-implementation/SKILL.md), [debugging](./skills/debugging/SKILL.md), and [testing and verification](./skills/testing-and-verification/SKILL.md). For questions about the backend/frontend stack, workspace exploration directs CodePilot to inspect manifests for each relevant app or service (such as `requirements.txt` and `package.json`) rather than relying on `README.md` alone. If a manifest is absent, it should inspect entry points, imports, and framework configuration, and identify the files supporting its conclusions.
+Built-in skills cover [workspace exploration](./skills/workspace-exploration/SKILL.md), [feature implementation](./skills/feature-implementation/SKILL.md), [debugging](./skills/debugging/SKILL.md), and [testing and verification](./skills/testing-and-verification/SKILL.md). Each skill now has an ordered workflow and a completion check. For questions about the backend/frontend stack, workspace exploration directs CodePilot to inspect manifests for each relevant app or service (such as `requirements.txt` and `package.json`) rather than relying on `README.md` alone. If a manifest is absent, it should inspect entry points, imports, and framework configuration, and identify the files supporting its conclusions.
 
 Skills provide workflow guidance only: they cannot enable file edits or tests, grant shell access, or change workspace restrictions. Skill activation and tool use are model-guided rather than a guarantee that every suggested inspection will occur, so verify tool traces for important answers. Use `/skills` in the CLI to list available skills.
 
@@ -258,11 +259,12 @@ User (Browser / Terminal)
         │
         ▼
   Agent Loop (loop.py)
-   ├─ System prompt + history + user message
+   ├─ System prompt + relevant skills + conversation history
    ├─ Ollama chat() with tool definitions
    ├─ Extract tool calls (native → XML → bracket-depth JSON)
-   ├─ Execute tools (list, read, search, opt-in write, opt-in pytest)
-   └─ Feed results back → next iteration
+   ├─ Execute validated tools (list, read, search, skill load, opt-in write, opt-in pytest)
+   ├─ Feed results back → next iteration
+   └─ Require non-README file evidence for stack questions
         │
         ▼
   Final answer (cleaned, markdown)
@@ -276,11 +278,13 @@ User (Browser / Terminal)
 ## Known Limitations
 
 - No general shell command tool is available. Pytest runs only after explicit user opt-in.
+- Model-generated unknown tool names fail closed: CodePilot runs no tools from that response and returns a deterministic notice instead of trusting an unverified follow-up answer.
 - File edits replace a whole file when explicitly enabled. Review changes in version control before accepting them.
 - Pytest executes the target project's code; treat the test opt-in as running untrusted code.
 - No streaming / SSE yet — responses arrive all at once
 - Context window capped at 8192 tokens (configurable via `.env`)
 - Workspace root is configured by the operator in `.env`; there is no per-request arbitrary-root access.
+- Zero hallucinations cannot be guaranteed. For backend/frontend or project technology questions, the loop requires at least two distinct successful non-README file reads before returning a stack answer; it withholds a conclusion if that evidence is missing. This is a minimum evidence check, not a proof that every model claim is correct.
 
 ---
 

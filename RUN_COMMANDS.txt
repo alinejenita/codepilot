@@ -1,0 +1,52 @@
+CodePilot startup commands (macOS)
+===================================
+
+Open four Terminal windows or tabs. Start each command in its own terminal.
+Start Ollama first, then the backend, browser UI, and/or CLI.
+
+1) Ollama server
+----------------
+Run this in Terminal 1:
+
+    ollama serve
+
+Leave it running. If you see "address already in use", Ollama is probably
+already running as a background service. In that case, stop the manual
+command and use this instead:
+
+    brew services start ollama
+
+On the first setup only, download the configured model in another terminal:
+
+    ollama pull qwen2.5-coder:7b
+
+2) Backend API
+--------------
+Run this in Terminal 2 from the CodePilot repository:
+
+    cd /Users/jenny/Development/projects/codepilot
+    source .venv/bin/activate
+    uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+
+The backend API will be available at http://127.0.0.1:8000.
+
+3) Browser frontend
+-------------------
+Run this in Terminal 3:
+
+    cd /Users/jenny/Development/projects/codepilot/frontend
+    npm run dev -- --host 127.0.0.1
+
+Open the URL printed by Vite, usually http://127.0.0.1:5173.
+
+4) Terminal CLI
+--------------
+Run this in Terminal 4:
+
+    cd /Users/jenny/Development/projects/codepilot
+    source .venv/bin/activate
+    python cli/main.py
+
+Keep the Ollama, backend, and browser dev-server terminals open while using
+those services. The terminal CLI connects directly to Ollama through the
+backend agent code.
