@@ -423,3 +423,18 @@ The CLI can target a user-selected existing directory while preserving workspace
 - The tool-free retry still relied on a second unverified model answer, so it did not satisfy the goal of avoiding unsupported claims.
 - Replaced that retry with a deterministic failure response when any unsupported tool is requested. No requested tools in that response are executed, including otherwise valid calls bundled with the unsupported one.
 - Regression tests assert that no second model response is used and that valid calls in a mixed response are not run.
+
+---
+
+## 2026-11-20 — Capstone Technical Project Report
+
+### Work completed
+- Embedded the existing architecture diagram and documented the project’s actual validation results and known frontend lint issues.
+- Added README links to the technical report and explainer video script so the submission documents are easy to find.
+
+### Verification
+- Backend tests — PASS (45 tests)
+- `cd frontend && npm run build` — PASS
+- Frontend lint — reports 40 existing `react/prop-types` errors across six files; recorded in the report.
+- Reopened and checked the DOCX with `python-docx`; confirmed the report content, 12 tables, and one embedded architecture image.
+- `git diff --check` — PASS
