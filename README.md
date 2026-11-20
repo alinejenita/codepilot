@@ -17,6 +17,10 @@ CodePilot is a full-stack AI coding assistant designed to run locally through Ol
 | **Terminal CLI** | Python `rich` (OpenCode-style) |
 | **Hardware** | MacBook Air M4 — 100% Apple Silicon Metal GPU offload |
 
+## Architecture
+
+See the [CodePilot architecture diagram](docs/architecture.md) for the web, CLI, backend, agent loop, tools, workspace, skills, and Ollama request flow.
+
 ---
 
 ## Features
@@ -136,7 +140,7 @@ cd ..
 ### Backend (FastAPI)
 
 ```bash
-cd /Users/jenny/Development/projects/codepilot
+# Run from the repository root
 source .venv/bin/activate
 uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
@@ -145,7 +149,7 @@ uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 
 ```bash
 cd frontend
-npm run dev
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 # Open http://localhost:5173
 ```
 
@@ -155,6 +159,52 @@ npm run dev
 source .venv/bin/activate
 python cli/main.py
 ```
+
+### Browser login
+
+The browser UI requires one shared username and password. Add these values to your local `.env` file (do not commit that file):
+
+```dotenv
+CODEPILOT_LOGIN_USERNAME=choose-a-username
+CODEPILOT_LOGIN_PASSWORD=choose-a-strong-unique-password
+CODEPILOT_SESSION_SECRET=paste-a-generated-secret-here
+CODEPILOT_COOKIE_SECURE=false
+```
+
+Generate a session secret with:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Use a password of at least 12 characters. `CODEPILOT_SESSION_SECRET` must be at least 32 characters. Use `CODEPILOT_COOKIE_SECURE=false` only for local HTTP development; set it to `true` when the browser accesses the app over HTTPS. Restart the backend after changing `.env`. If login is not configured, the UI stays locked and protected API routes return an error.
+
+The login protects workspace, health, and chat APIs with an HTTP-only session cookie that expires after 8 hours. It is a shared demo account, not individual user accounts.
+
+### Optional private demo URL (Tailscale)
+
+The web UI calls the backend through a same-origin `/api` path. During local development, Vite proxies these requests to FastAPI on `127.0.0.1:8000`. Tailscale is optional; it adds private network access on top of the CodePilot login. Keep the backend and Ollama bound to the Mac and share only the Vite UI.
+
+1. Install and sign in to Tailscale on your Mac. Your mentor must be an authorized member of the same tailnet.
+2. Start Ollama and the backend using the commands above.
+3. Start the frontend from the `frontend` directory, pinned to port 5173:
+
+   ```bash
+   npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
+   ```
+
+4. In another terminal, publish the local frontend only to your tailnet:
+
+   ```bash
+   tailscale serve --bg 5173
+   tailscale serve status
+   ```
+
+5. Share the HTTPS URL shown by `tailscale serve status`. Keep the Mac, Ollama, backend, and Vite terminals running during the demo.
+
+To stop serving the demo, run `tailscale serve reset`. Do not expose ports `8000` (FastAPI) or `11434` (Ollama), and do not use this development-server setup as a permanent public deployment.
+
+The login is not a substitute for production security. Anyone who obtains the shared credentials can access the configured workspace and submit requests enabling edits or pytest. Use a sanitized workspace with no secrets, keep HTTPS enabled for remote access, and share credentials only with trusted viewers.
 
 The CLI starts in the configured default workspace. You can name a different save destination or explicitly select an existing workspace directly in a task prompt; for example:
 

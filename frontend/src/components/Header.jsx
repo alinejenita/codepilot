@@ -2,7 +2,8 @@ import {
   PanelLeft, 
   FolderGit2, 
   RefreshCw,
-  ChevronDown
+  ChevronDown,
+  LogOut
 } from 'lucide-react';
 
 export default function Header({
@@ -13,6 +14,7 @@ export default function Header({
   showWorkspacePanel,
   onToggleWorkspacePanel,
   onToggleSidebar,
+  onLogout,
   currentChatTitle = "New Chat"
 }) {
   return (
@@ -83,6 +85,15 @@ export default function Header({
           className="p-1.5 text-[#8a8880] hover:text-[#edece6] hover:bg-[#262624] rounded-lg transition-colors"
         >
           <RefreshCw size={13} />
+        </button>
+
+        <button
+          onClick={onLogout}
+          title="Sign out"
+          aria-label="Sign out"
+          className="p-1.5 text-[#8a8880] hover:text-[#edece6] hover:bg-[#262624] rounded-lg transition-colors"
+        >
+          <LogOut size={14} />
         </button>
       </div>
     </header>

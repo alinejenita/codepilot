@@ -2,13 +2,18 @@
 
 import uuid
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from backend.app.auth import require_authenticated_user
 from backend.app.agent.loop import run_agent_turn
 from backend.app.config import settings
 from backend.app.tools.file_tools import list_files, read_file, safe_resolve_path
 
-router = APIRouter(prefix="/api", tags=["chat"])
+router = APIRouter(
+    prefix="/api",
+    tags=["chat"],
+    dependencies=[Depends(require_authenticated_user)],
+)
 
 
 class ChatRequest(BaseModel):

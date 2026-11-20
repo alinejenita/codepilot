@@ -1,10 +1,15 @@
 """Health and system status endpoint."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 import ollama
+from backend.app.auth import require_authenticated_user
 from backend.app.config import settings
 
-router = APIRouter(prefix="/api", tags=["system"])
+router = APIRouter(
+    prefix="/api",
+    tags=["system"],
+    dependencies=[Depends(require_authenticated_user)],
+)
 
 
 @router.get("/health")

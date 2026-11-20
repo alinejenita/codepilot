@@ -3,6 +3,17 @@ CodePilot startup commands (macOS)
 
 Open four Terminal windows or tabs. Start each command in its own terminal.
 Start Ollama first, then the backend, browser UI, and/or CLI.
+For a private demo URL, use an additional terminal for Tailscale Serve.
+
+Before starting the backend, configure CODEPILOT_LOGIN_USERNAME,
+CODEPILOT_LOGIN_PASSWORD, and CODEPILOT_SESSION_SECRET in the repository's
+local .env file. Generate a session secret with:
+
+    python -c "import secrets; print(secrets.token_urlsafe(32))"
+
+Set CODEPILOT_COOKIE_SECURE=false for localhost HTTP development. Set it to
+true when the browser uses an HTTPS URL. Restart the backend after changing
+.env.
 
 1) Ollama server
 ----------------
@@ -22,9 +33,8 @@ On the first setup only, download the configured model in another terminal:
 
 2) Backend API
 --------------
-Run this in Terminal 2 from the CodePilot repository:
+Run this in Terminal 2 from the CodePilot repository root:
 
-    cd /Users/jenny/Development/projects/codepilot
     source .venv/bin/activate
     uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 
@@ -32,18 +42,33 @@ The backend API will be available at http://127.0.0.1:8000.
 
 3) Browser frontend
 -------------------
-Run this in Terminal 3:
+Run this in Terminal 3 from the CodePilot repository root:
 
-    cd /Users/jenny/Development/projects/codepilot/frontend
-    npm run dev -- --host 127.0.0.1
+    cd frontend
+    npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 Open the URL printed by Vite, usually http://127.0.0.1:5173.
 
+For a private demo URL, after signing in to Tailscale on your Mac:
+
+    tailscale serve --bg 5173
+    tailscale serve status
+
+Share the HTTPS URL shown by `tailscale serve status` only with an authorized
+member of your tailnet. Stop sharing with:
+
+    tailscale serve reset
+
+Do not expose the backend port 8000 or Ollama port 11434 directly.
+After opening the URL, sign in with the CodePilot username and password from
+the backend's .env file. Anyone with the shared credentials can access the
+configured workspace and submit requests enabling edits or pytest. Use a
+sanitized demo workspace and share credentials only with trusted viewers.
+
 4) Terminal CLI
 --------------
-Run this in Terminal 4:
+Run this in Terminal 4 from the CodePilot repository root:
 
-    cd /Users/jenny/Development/projects/codepilot
     source .venv/bin/activate
     python cli/main.py
 

@@ -1,6 +1,7 @@
 """Configuration settings for CodePilot loaded from environment and .env file."""
 
 from pathlib import Path
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +15,16 @@ class Settings(BaseSettings):
     workspace_root: str = "./workspace"
     max_agent_iterations: int = 8
     command_timeout_seconds: int = 30
+    login_username: str = Field(default="", validation_alias="CODEPILOT_LOGIN_USERNAME")
+    login_password: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias="CODEPILOT_LOGIN_PASSWORD",
+    )
+    session_secret: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias="CODEPILOT_SESSION_SECRET",
+    )
+    cookie_secure: bool = Field(default=False, validation_alias="CODEPILOT_COOKIE_SECURE")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -24,6 +35,16 @@ class Settings(BaseSettings):
     @property
     def resolved_workspace_root(self) -> Path:
         return Path(self.workspace_root).resolve()
+
+    @property
+    def login_configured(self) -> bool:
+        login_password = self.login_password.get_secret_value()
+        session_secret = self.session_secret.get_secret_value()
+        return bool(
+            self.login_username.strip()
+            and len(login_password) >= 12
+            and len(session_secret.encode("utf-8")) >= 32
+        )
 
 
 settings = Settings()

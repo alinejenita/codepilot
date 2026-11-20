@@ -1,9 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
 import ChatMessage from './components/ChatMessage';
+import LoginScreen from './components/LoginScreen';
 import WorkspacePanel from './components/WorkspacePanel';
-import { fetchHealth, sendChatMessage } from './services/api';
+import {
+  fetchAuthStatus,
+  fetchHealth,
+  login,
+  logout,
+  sendChatMessage,
+} from './services/api';
 import { ArrowUp, Send, FolderSearch, Terminal, FileCode2 } from 'lucide-react';
 
 const STORAGE_KEY = 'codepilot_chat_sessions_v2';
@@ -155,6 +162,13 @@ function RoamingPlane() {
 }
 
 export default function App() {
+  const [auth, setAuth] = useState({
+    loading: true,
+    configured: false,
+    authenticated: false,
+    error: '',
+  });
+
   // Load sessions from localStorage or initialize with default
   const [sessions, setSessions] = useState(() => {
     try {
@@ -204,6 +218,42 @@ export default function App() {
   const isSendingRef = useRef(false);
   const messagesEndRef = useRef(null);
 
+  useEffect(() => {
+    let active = true;
+    fetchAuthStatus()
+      .then((status) => {
+        if (active) {
+          setAuth({
+            loading: false,
+            configured: status.configured,
+            authenticated: status.authenticated,
+            error: '',
+          });
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setAuth({
+            loading: false,
+            configured: false,
+            authenticated: false,
+            error: error.message,
+          });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setAuth((current) => ({ ...current, authenticated: false }));
+    };
+    window.addEventListener('codepilot:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('codepilot:unauthorized', handleUnauthorized);
+  }, []);
+
   // Sync sessions to localStorage
   useEffect(() => {
     try {
@@ -222,18 +272,18 @@ export default function App() {
     }
   }, [currentSessionId]);
 
-  // Check backend and Ollama health
-  useEffect(() => {
-    loadHealth();
-    const interval = setInterval(loadHealth, 10000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadHealth = async () => {
+  const loadHealth = useCallback(async () => {
     const data = await fetchHealth();
     setHealth(data);
     if (data.model) setCurrentModel(data.model);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!auth.authenticated) return undefined;
+    void loadHealth();
+    const interval = setInterval(() => void loadHealth(), 10000);
+    return () => clearInterval(interval);
+  }, [auth.authenticated, loadHealth]);
 
   const currentSession = sessions.find((s) => s.id === currentSessionId) || sessions[0];
 
@@ -386,6 +436,73 @@ Make sure the backend is active at \`http://127.0.0.1:8000\` and Ollama is runni
     { label: "Explain a file in the workspace", icon: <Terminal size={14} className="text-orange-400" /> },
   ];
 
+  const handleLogin = async (username, password) => {
+    await login(username, password);
+    setAuth({
+      loading: false,
+      configured: true,
+      authenticated: true,
+      error: '',
+    });
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      setAuth({
+        loading: false,
+        configured: true,
+        authenticated: false,
+        error: '',
+      });
+    } catch (error) {
+      setAuth((current) => ({
+        ...current,
+        authenticated: false,
+        error: `Sign out failed: ${error.message}`,
+      }));
+    }
+  };
+
+  if (auth.loading) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#181816] text-sm text-[#9c9a92]">
+        Checking CodePilot login...
+      </main>
+    );
+  }
+
+  if (auth.error) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#181816] px-4 text-[#edece6]">
+        <section className="max-w-md rounded-2xl border border-[#383834] bg-[#242422] p-6 text-center">
+          <h1 className="mb-2 text-lg font-semibold">CodePilot login unavailable</h1>
+          <p role="alert" className="text-sm text-[#c5c3bb]">{auth.error}</p>
+          <p className="mt-3 text-xs text-[#9c9a92]">Check that the backend is running, then reload this page.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!auth.configured) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#181816] px-4 text-[#edece6]">
+        <section className="max-w-md rounded-2xl border border-[#383834] bg-[#242422] p-6">
+          <h1 className="mb-2 text-lg font-semibold">Login is not configured</h1>
+          <p className="text-sm text-[#c5c3bb]">
+            Set CODEPILOT_LOGIN_USERNAME, a CODEPILOT_LOGIN_PASSWORD of at
+            least 12 characters, and a CODEPILOT_SESSION_SECRET of at least
+            32 characters in the backend environment, then restart the backend.
+          </p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!auth.authenticated) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#181816] text-[#edece6]">
       {/* Claude-style Left Sidebar */}
@@ -410,6 +527,7 @@ Make sure the backend is active at \`http://127.0.0.1:8000\` and Ollama is runni
           availableModels={health?.available_models}
           health={health}
           onRefreshHealth={loadHealth}
+          onLogout={handleLogout}
           showWorkspacePanel={showWorkspacePanel}
           onToggleWorkspacePanel={() => setShowWorkspacePanel(!showWorkspacePanel)}
           isSidebarOpen={isSidebarOpen}
