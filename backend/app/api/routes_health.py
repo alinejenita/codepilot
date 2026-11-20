@@ -18,7 +18,10 @@ def get_health():
     available_models = []
 
     try:
-        client = ollama.Client(host=settings.ollama_base_url)
+        client = ollama.Client(
+            host=settings.ollama_base_url,
+            timeout=settings.ollama_request_timeout_seconds,
+        )
         res = client.list()
         available_models = [m.model for m in res.models]
         ollama_connected = True

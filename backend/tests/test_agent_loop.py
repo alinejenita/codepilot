@@ -45,7 +45,12 @@ def test_agent_searches_then_answers_with_real_tool_result(monkeypatch, tmp_path
         native_call("search_files", {"query": "answer"}),
         final_answer("The workspace defines `answer = 42`."),
     ])
-    monkeypatch.setattr(loop.ollama, "Client", lambda **_: client)
+    client_options = {}
+    monkeypatch.setattr(
+        loop.ollama,
+        "Client",
+        lambda **kwargs: client_options.update(kwargs) or client,
+    )
 
     answer, steps, active_workspace = loop.run_agent_turn("Find the answer")
 
@@ -53,6 +58,7 @@ def test_agent_searches_then_answers_with_real_tool_result(monkeypatch, tmp_path
     assert active_workspace == str(tmp_path)
     assert steps[0]["tool"] == "search_files"
     assert steps[0]["result"]["matches"][0]["path"] == "module.py"
+    assert client_options["timeout"] == settings.ollama_request_timeout_seconds
     assert client.calls[0]["keep_alive"] == settings.ollama_keep_alive
     assert "write_file" not in {tool["function"]["name"] for tool in client.calls[0]["tools"]}
 

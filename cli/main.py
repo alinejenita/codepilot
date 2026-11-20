@@ -186,7 +186,10 @@ def run_cli():
     console.clear()
     print_banner(current_model)
 
-    client = ollama.Client(host=settings.ollama_base_url)
+    client = ollama.Client(
+        host=settings.ollama_base_url,
+        timeout=settings.ollama_request_timeout_seconds,
+    )
 
     # Verify Ollama connection
     try:
@@ -280,16 +283,26 @@ def run_cli():
         if edits_for_request and not allow_edits:
             console.print("[info]This prompt requests a file change; allowing edits for this task only.[/info]")
 
-        with console.status(f"[bold cyan]Planning & running tools with {current_model}...[/bold cyan]", spinner="dots"):
-            response_text, steps, _ = run_agent_turn(
-                user_prompt=user_input,
-                model_name=current_model,
-                history=conversation_history,
-                workspace=str(current_workspace),
-                allow_edits=edits_for_request,
-                allow_test_execution=allow_test_execution,
-                allow_external_workspace=current_workspace_is_external,
+        try:
+            with console.status(f"[bold cyan]Planning & running tools with {current_model}...[/bold cyan]", spinner="dots"):
+                response_text, steps, _ = run_agent_turn(
+                    user_prompt=user_input,
+                    model_name=current_model,
+                    history=conversation_history,
+                    workspace=str(current_workspace),
+                    allow_edits=edits_for_request,
+                    allow_test_execution=allow_test_execution,
+                    allow_external_workspace=current_workspace_is_external,
+                )
+        except KeyboardInterrupt:
+            console.print("\n[warning]Turn interrupted. No response was received.[/warning]")
+            continue
+        except Exception as exc:
+            console.print(
+                f"\n[danger]Agent turn failed ({type(exc).__name__}): {exc}[/danger]"
             )
+            console.print_exception(show_locals=False)
+            continue
 
         last_traces = steps
         conversation_history.extend([

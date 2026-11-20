@@ -21,6 +21,11 @@ CodePilot is a full-stack AI coding assistant designed to run locally through Ol
 
 See the [CodePilot architecture diagram](docs/architecture.md) for the web, CLI, backend, agent loop, tools, workspace, skills, and Ollama request flow.
 
+## Submission documents
+
+- [Technical project report](docs/CodePilot_Technical_Project_Report.docx)
+- [Explainer video script](docs/CodePilot_Explainer_Video_Script.docx)
+
 ---
 
 ## Features
@@ -122,7 +127,7 @@ pip install -r backend/requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env if needed — defaults work out of the box
+# Set the browser login credentials and session secret before starting the app.
 ```
 
 ### 5. Install frontend dependencies
@@ -159,6 +164,8 @@ npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 source .venv/bin/activate
 python cli/main.py
 ```
+
+The CLI cancels the current turn and returns to the prompt if you press `Ctrl+C` while a model request is running. Ollama requests time out after 300 seconds by default; change `OLLAMA_REQUEST_TIMEOUT_SECONDS` in `.env` if needed.
 
 ### Browser login
 
@@ -240,6 +247,9 @@ For a direct request to create or change a file (for example, “create a calcul
 
 | Method | Path | Description |
 |---|---|---|
+| `GET` | `/api/auth/status` | Check whether login is configured and the current browser session is authenticated |
+| `POST` | `/api/auth/login` | Sign in with the configured shared username and password |
+| `POST` | `/api/auth/logout` | Clear the browser session cookie |
 | `GET` | `/api/health` | Ollama status + available models |
 | `GET` | `/api/workspace` | List files at the configured workspace root |
 | `GET` | `/api/workspace/file?path=...` | Preview a UTF-8 text file inside the workspace |

@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     ollama_context_length: int = 8192
     ollama_temperature: float = 0.2
     ollama_keep_alive: str = "10m"
+    ollama_request_timeout_seconds: int = Field(default=300, ge=1)
 
     workspace_root: str = "./workspace"
     max_agent_iterations: int = 8

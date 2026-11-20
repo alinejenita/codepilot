@@ -119,3 +119,42 @@ def test_cli_sends_previous_turns_as_agent_history(monkeypatch):
         {"role": "user", "content": "What technologies are used for backend and frontend?"},
         {"role": "assistant", "content": "I will inspect the project files."},
     ]
+
+
+def test_cli_handles_interrupt_during_agent_turn(monkeypatch):
+    class FakeConsole:
+        def __init__(self):
+            self.inputs = iter(["Create a file", "/exit"])
+            self.messages = []
+
+        def clear(self):
+            pass
+
+        def input(self, _prompt):
+            return next(self.inputs)
+
+        def print(self, message="", **_kwargs):
+            self.messages.append(str(message))
+
+        def status(self, *_args, **_kwargs):
+            return nullcontext()
+
+    class FakeOllamaClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def list(self):
+            return object()
+
+    fake_console = FakeConsole()
+
+    def interrupt_turn(**_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli_main, "console", fake_console)
+    monkeypatch.setattr(cli_main.ollama, "Client", FakeOllamaClient)
+    monkeypatch.setattr(cli_main, "run_agent_turn", interrupt_turn)
+
+    cli_main.run_cli()
+
+    assert any("Turn interrupted" in message for message in fake_console.messages)

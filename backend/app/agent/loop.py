@@ -361,7 +361,10 @@ def run_agent_turn(
     model = model_name or settings.ollama_model
     active_workspace = _resolve_active_workspace(workspace, allow_external_workspace)
     iteration_limit = settings.max_agent_iterations if max_iterations is None else max_iterations
-    client = ollama.Client(host=settings.ollama_base_url)
+    client = ollama.Client(
+        host=settings.ollama_base_url,
+        timeout=settings.ollama_request_timeout_seconds,
+    )
 
     conversation_context = "\n".join(
         [
